@@ -58,7 +58,7 @@ export type TryOnAccepted = { job_id: string; status: JobStatus; channel: string
 
 export type CartItem = {
   id: string;
-  product: { id: string; name: string; category: Category; garment_image_url: string };
+  product: { id: string; name: string; category: Category; garment_image_url: string; stock: number };
   size: string | null;
   color: string | null;
   quantity: number;

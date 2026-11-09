@@ -18,7 +18,7 @@ export type Filters = { category: Category | "all"; onSale: boolean; search: str
 export type CatalogState = "idle" | "loading" | "loadingMore" | "error";
 export type CaptureFn = () => Promise<Blob>;
 export type AddToCartResult = { ok: true } | { ok: false; message: string };
-export type RemoveFromCartResult = AddToCartResult;
+export type CartChangeResult = AddToCartResult;
 
 const GENERIC_ERROR = "Something went wrong. Please try again.";
 const TOO_SLOW = "This is taking longer than expected. Please try again.";
@@ -61,7 +61,8 @@ type State = {
   cancelCountdown: () => void;
   backToBrowsing: () => void;
   addToCart: (product: Product, size: string | null, color: string | null) => Promise<AddToCartResult>;
-  removeFromCart: (itemId: string) => Promise<RemoveFromCartResult>;
+  removeFromCart: (itemId: string) => Promise<CartChangeResult>;
+  setCartQuantity: (itemId: string, quantity: number) => Promise<CartChangeResult>;
   openCart: () => void;
   closeCart: () => void;
   reset: () => void;
@@ -93,6 +94,37 @@ function stopFollowingJob() {
   jobTimer = undefined;
   untrack?.();
   untrack = null;
+}
+
+/**
+ * Applies one change to the cart (remove a line, set its quantity) and keeps the cart the API answers with.
+ * When the API says the line is gone (404) or there is not enough stock (409) the cart on screen is out of date,
+ * so the real one is fetched; a vanished line then counts as done, while a stock refusal still reports why.
+ */
+function changeCart(call: (sessionId: string) => Promise<Cart>): Promise<CartChangeResult> {
+  return inCartOrder(async (): Promise<CartChangeResult> => {
+    const sessionId = useKioskStore.getState().session?.id;
+    if (!sessionId) return { ok: false, message: GENERIC_ERROR };
+    const apply = (cart: Cart) => {
+      if (useKioskStore.getState().session?.id === sessionId) useKioskStore.setState({ cart });
+    };
+    try {
+      apply(await call(sessionId));
+      return { ok: true };
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 404 || e.status === 409)) {
+        let refreshed = false;
+        try {
+          apply(await api.getCart(sessionId));
+          refreshed = true;
+        } catch {
+          /* keep the original message */
+        }
+        if (e.status === 404 && refreshed) return { ok: true };
+      }
+      return { ok: false, message: describeError(e) };
+    }
+  });
 }
 
 const initial = {
@@ -268,29 +300,10 @@ export const useKioskStore = create<State>((set, get) => {
         }
       }),
 
-    removeFromCart: (itemId) =>
-      inCartOrder(async (): Promise<RemoveFromCartResult> => {
-        const sessionId = get().session?.id;
-        if (!sessionId) return { ok: false, message: GENERIC_ERROR };
-        const apply = (cart: Cart) => {
-          if (get().session?.id === sessionId) set({ cart });
-        };
-        try {
-          apply(await api.removeFromCart(sessionId, itemId));
-          return { ok: true };
-        } catch (e) {
-          if (e instanceof ApiError && e.status === 404) {
-            // Already gone (a double tap, or removed elsewhere): the cart on screen is stale, so show the real one.
-            try {
-              apply(await api.getCart(sessionId));
-              return { ok: true };
-            } catch {
-              /* fall through to the original message */
-            }
-          }
-          return { ok: false, message: describeError(e) };
-        }
-      }),
+    removeFromCart: (itemId) => changeCart((sessionId) => api.removeFromCart(sessionId, itemId)),
+
+    setCartQuantity: (itemId, quantity) =>
+      changeCart((sessionId) => api.setCartQuantity(sessionId, itemId, quantity)),
 
     openCart: () => {
       set({ cartOpen: true });

@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.models.product import ProductCategory
 
 MAX_QUANTITY_PER_ADD = 10
+MAX_LINE_QUANTITY = 99  # the most one cart line can be set to; stock is the usual limit well before this
 
 
 class CartAddIn(BaseModel):
@@ -15,6 +16,12 @@ class CartAddIn(BaseModel):
     quantity: int = Field(default=1, ge=1, le=MAX_QUANTITY_PER_ADD)
 
 
+class CartItemUpdateIn(BaseModel):
+    quantity: int = Field(
+        ge=1, le=MAX_LINE_QUANTITY, description="The new quantity; use DELETE to remove the line"
+    )
+
+
 class CartProductOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -22,6 +29,7 @@ class CartProductOut(BaseModel):
     name: str
     category: ProductCategory
     garment_image_url: str
+    stock: int
 
 
 class CartItemOut(BaseModel):

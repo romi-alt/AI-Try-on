@@ -124,6 +124,10 @@ export const api = {
 
   getCart: (sessionId: string) => request<Cart>(`/cart/${sessionId}`),
 
+  /** Sets one line's quantity (1 or more) and returns the updated cart. 409 when there is not enough stock. */
+  setCartQuantity: (sessionId: string, itemId: string, quantity: number) =>
+    request<Cart>(`/cart/${sessionId}/items/${itemId}`, { method: "PATCH", body: JSON.stringify({ quantity }) }),
+
   /** Removes one whole line and returns the updated cart. A line that is already gone is a 404. */
   removeFromCart: (sessionId: string, itemId: string) =>
     request<Cart>(`/cart/${sessionId}/items/${itemId}`, { method: "DELETE" }),

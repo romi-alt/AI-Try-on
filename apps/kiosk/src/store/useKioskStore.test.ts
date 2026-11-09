@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
     addToCart: vi.fn(),
     getCart: vi.fn(),
     removeFromCart: vi.fn(),
+    setCartQuantity: vi.fn(),
   },
   events: { track: vi.fn(), close: vi.fn() },
   createSessionEvents: vi.fn(),
@@ -600,5 +601,86 @@ describe("removing from the cart", () => {
     await pending;
 
     expect(store().cart).toBeNull();
+  });
+});
+
+describe("changing a cart quantity", () => {
+  const line = (quantity: number) => ({ id: "line-1", product: { stock: 3 }, size: "M", color: null, quantity, unit_price_pkr: 500, line_total_pkr: 500 * quantity });
+  const cartOf = (quantity: number) => ({ session_id: "sess-1", cart_id: "c1", items: [line(quantity)], item_count: quantity, subtotal_pkr: 500 * quantity });
+  beforeEach(openSession);
+
+  it("sends the new quantity and keeps the cart the API returns", async () => {
+    useKioskStore.setState({ cart: cartOf(1) as never });
+    mocks.api.setCartQuantity.mockResolvedValue(cartOf(2));
+
+    const result = await store().setCartQuantity("line-1", 2);
+
+    expect(result).toEqual({ ok: true });
+    expect(mocks.api.setCartQuantity).toHaveBeenCalledWith("sess-1", "line-1", 2);
+    expect(store().cart).toEqual(cartOf(2));
+  });
+
+  it("explains a stock refusal and refreshes the cart so the screen shows the real stock", async () => {
+    useKioskStore.setState({ cart: cartOf(2) as never });
+    mocks.api.setCartQuantity.mockRejectedValue(new ApiError(409, "Only 2 in stock"));
+    mocks.api.getCart.mockResolvedValue(cartOf(2));
+
+    const result = await store().setCartQuantity("line-1", 3);
+
+    expect(result).toEqual({ ok: false, message: "Only 2 in stock" });
+    expect(mocks.api.getCart).toHaveBeenCalledWith("sess-1");
+  });
+
+  it("still reports a stock refusal when the refresh fails too", async () => {
+    mocks.api.setCartQuantity.mockRejectedValue(new ApiError(409, "Only 2 in stock"));
+    mocks.api.getCart.mockRejectedValue(new ApiError(0, "offline"));
+    expect(await store().setCartQuantity("line-1", 3)).toEqual({ ok: false, message: "Only 2 in stock" });
+  });
+
+  it("shows the real cart when the line was removed in the meantime", async () => {
+    const empty = { session_id: "sess-1", cart_id: "c1", items: [], item_count: 0, subtotal_pkr: 0 };
+    mocks.api.setCartQuantity.mockRejectedValue(new ApiError(404, "That item is not in the cart"));
+    mocks.api.getCart.mockResolvedValue(empty);
+
+    expect(await store().setCartQuantity("line-1", 2)).toEqual({ ok: true });
+    expect(store().cart).toEqual(empty);
+  });
+
+  it("keeps the cart on screen when the request cannot be made", async () => {
+    useKioskStore.setState({ cart: cartOf(1) as never });
+    mocks.api.setCartQuantity.mockRejectedValue(new ApiError(0, "Can't reach the mirror's server."));
+    expect(await store().setCartQuantity("line-1", 2)).toEqual({ ok: false, message: "Can't reach the mirror's server." });
+    expect(store().cart).toEqual(cartOf(1));
+    expect(mocks.api.getCart).not.toHaveBeenCalled(); // only 404 and 409 mean the screen is out of date
+  });
+
+  it("never shows the previous shopper's cart to the next one", async () => {
+    let finish!: (c: unknown) => void;
+    mocks.api.setCartQuantity.mockReturnValue(new Promise((r) => (finish = r)));
+    const pending = store().setCartQuantity("line-1", 2);
+    await flush();
+
+    store().reset();
+    finish(cartOf(2));
+    await pending;
+
+    expect(store().cart).toBeNull();
+  });
+
+  it("goes in line with other cart changes, so answers cannot arrive out of order", async () => {
+    const answers: Array<(c: unknown) => void> = [];
+    mocks.api.removeFromCart.mockImplementation(() => new Promise((r) => answers.push(r)));
+    mocks.api.setCartQuantity.mockResolvedValue(cartOf(3));
+
+    const removal = store().removeFromCart("line-9");
+    const change = store().setCartQuantity("line-1", 3);
+    await flush();
+    expect(mocks.api.setCartQuantity).not.toHaveBeenCalled(); // waits for the removal to be answered
+
+    answers[0](cartOf(1));
+    await Promise.all([removal, change]);
+
+    expect(mocks.api.setCartQuantity).toHaveBeenCalledTimes(1);
+    expect(store().cart).toEqual(cartOf(3)); // the later change is the last word
   });
 });

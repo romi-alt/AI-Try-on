@@ -15,6 +15,7 @@ FastAPI backend. Owns the catalog, kiosk sessions, presigned uploads and try-on 
 | GET    | `/sessions`                  | admin  | Sessions with try-on counts                  |
 | POST   | `/cart/add`                  | –      | Add a product (size/color/quantity) to the session's cart; returns the cart |
 | GET    | `/cart/{session_id}`         | –      | The session's cart with prices and subtotal  |
+| PATCH  | `/cart/{session_id}/items/{item_id}` | – | Set one cart line's quantity (`{"quantity": 1..99}`); returns the cart. 409 if there is not enough stock, 404 if the line is not in this session's cart |
 | DELETE | `/cart/{session_id}/items/{item_id}` | – | Remove one cart line (all its quantity); returns the cart. 404 if the line is not in this session's cart or is already gone |
 | POST   | `/capture`                   | –      | Upload a webcam photo (multipart `file` + `session_id`); returns its storage key |
 | POST   | `/tryon`                     | –      | Queue a try-on for 1–5 `product_ids`; returns `job_id` immediately (202) |
@@ -34,8 +35,11 @@ FastAPI backend. Owns the catalog, kiosk sessions, presigned uploads and try-on 
 - **Cart:** one cart per session, created on first add. Adding the same product/size/color again
   increases that line. `size` and `color` must be one of the product's options and may only be
   omitted when there is nothing to choose. Stock is checked across all lines of a product but not
-  reserved. Concurrent adds and removals on one cart are serialised with a row lock. Removing a line frees its
-  stock for later adds; there is no endpoint to change a quantity, so lowering one means removing the line and adding again.
+  reserved. Concurrent adds, quantity changes and removals on one cart are serialised with a row lock. A line's
+  quantity can be set with `PATCH` and a line removed with `DELETE`. Raising a quantity is checked against stock
+  across all of the product's lines (every size and colour), as when adding; lowering one is always allowed, even if
+  stock has since dropped below what is in the cart. Removing a line frees its stock for later adds. Each cart
+  product includes its current `stock`, so a client can stop offering "+" at the limit.
 - **Prices:** `current_price_pkr` is the sale price when on sale, else the regular price. Cart totals
   use the current price.
 - **CORS:** only the origins in `API_CORS_ORIGINS` (default: kiosk `:3000` and admin `:3001`); no credentials.

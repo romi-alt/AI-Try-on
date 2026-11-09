@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AsyncDb
 from app.models import Cart, CartItem, KioskSession, Product
-from app.schemas.cart import CartAddIn, CartItemOut, CartOut, CartProductOut
+from app.schemas.cart import CartAddIn, CartItemOut, CartItemUpdateIn, CartOut, CartProductOut
 
 router = APIRouter(prefix="/cart", tags=["cart"])
 logger = logging.getLogger("app.cart")
@@ -142,6 +142,64 @@ async def add_to_cart(payload: CartAddIn, db: AsyncDb):
         },
     )
     return await _build_cart(db, payload.session_id)
+
+
+@router.patch("/{session_id}/items/{item_id}", response_model=CartOut)
+async def set_item_quantity(
+    session_id: uuid.UUID, item_id: uuid.UUID, payload: CartItemUpdateIn, db: AsyncDb
+):
+    """Set one line's quantity (1 or more) and return the updated cart.
+
+    Raising it is checked against stock across every line of that product, as when adding. Lowering it is
+    always allowed, even if stock has since dropped below what is in the cart. The line must belong to this
+    session's cart, otherwise 404. To take a line out entirely, use DELETE.
+    """
+    await _require_session(db, session_id)
+    cart = (
+        await db.execute(select(Cart).where(Cart.session_id == session_id).with_for_update())
+    ).scalar_one_or_none()
+    line = None
+    if cart:
+        line = await db.scalar(select(CartItem).where(CartItem.id == item_id, CartItem.cart_id == cart.id))
+    if line is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "That item is not in the cart")
+
+    if payload.quantity > line.quantity:
+        product = await db.get(Product, line.product_id)
+        elsewhere = (
+            await db.scalar(
+                select(func.coalesce(func.sum(CartItem.quantity), 0)).where(
+                    CartItem.cart_id == cart.id,
+                    CartItem.product_id == line.product_id,
+                    CartItem.id != line.id,
+                )
+            )
+            or 0
+        )
+        if elsewhere + payload.quantity > product.stock:
+            if product.stock <= 0:
+                detail = "Out of stock"
+            elif elsewhere:
+                detail = f"Only {product.stock} in stock ({elsewhere} already in your cart in other options)"
+            else:
+                detail = f"Only {product.stock} in stock"
+            raise HTTPException(status.HTTP_409_CONFLICT, detail)
+
+    previous = line.quantity
+    if payload.quantity != previous:
+        line.quantity = payload.quantity
+        cart.updated_at = func.now()
+        await db.commit()
+        logger.info(
+            "cart_item_quantity_set",
+            extra={
+                "session_id": str(session_id),
+                "item_id": str(item_id),
+                "from": previous,
+                "to": payload.quantity,
+            },
+        )
+    return await _build_cart(db, session_id)
 
 
 @router.delete("/{session_id}/items/{item_id}", response_model=CartOut)
