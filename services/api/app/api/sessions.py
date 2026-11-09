@@ -1,10 +1,11 @@
 import logging
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy import func, select
 
 from app.api.deps import AsyncDb
 from app.core.auth import require_admin
+from app.core.ratelimit import check_ip
 from app.models import KioskSession, TryOnJob
 from app.schemas.session import SessionAdminOut, SessionCreate, SessionOut
 
@@ -13,8 +14,9 @@ logger = logging.getLogger("app.sessions")
 
 
 @router.post("", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
-async def create_session(payload: SessionCreate, db: AsyncDb):
+async def create_session(payload: SessionCreate, request: Request, db: AsyncDb):
     """Start a session. Rejected with 422 unless `consent_given` is true."""
+    await check_ip("session_start_ip", request)
     session = KioskSession(consent_given=payload.consent_given)
     db.add(session)
     await db.commit()

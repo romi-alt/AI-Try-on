@@ -10,9 +10,10 @@ import logging
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Annotated
 
 from botocore.exceptions import BotoCoreError, ClientError
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, HTTPException, Path, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from starlette.concurrency import run_in_threadpool
@@ -21,6 +22,13 @@ from app.api.cart import _build_cart, _require_session
 from app.api.deps import AsyncDb
 from app.api.orders import place_order, return_stock
 from app.core.config import settings
+from app.core.ratelimit import (
+    check,
+    check_ip,
+    check_session,
+    raise_if_blocked,
+    record_ip_failure,
+)
 from app.core.storage import object_exists, presigned_get
 from app.models import (
     Cart,
@@ -45,6 +53,9 @@ from app.schemas.share import (
 from app.services.payments import get_payment_provider
 
 router = APIRouter(tags=["share"])
+# The codes this app makes are 8 letters and digits (a typed one may have stray spaces); anything else cannot
+# exist, so it is refused before any lookup.
+MobileCode = Annotated[str, Path(max_length=20, pattern=r"^ {0,2}[A-Za-z0-9]{4,16} {0,2}$")]
 logger = logging.getLogger("app.share")
 
 # No I, O, 0 or 1: the code is also typed by hand when a camera cannot read the QR.
@@ -64,6 +75,7 @@ def _result_key(session_id: uuid.UUID, job_id: uuid.UUID) -> str:
 @router.post("/share", response_model=ShareOut, status_code=status.HTTP_201_CREATED)
 async def create_share(payload: ShareCreate, response: Response, db: AsyncDb) -> ShareOut:
     """Make (or find) the mobile-page code for a session and, optionally, one of its finished looks."""
+    await check_session("share_session", payload.session_id)
     await _require_session(db, payload.session_id)
     if payload.job_id is not None:
         job = await db.get(TryOnJob, payload.job_id)
@@ -102,9 +114,12 @@ async def create_share(payload: ShareCreate, response: Response, db: AsyncDb) ->
     return ShareOut(short_code=link.short_code, path=f"/m/{link.short_code}", expires_at=link.expires_at)
 
 
-async def _live_link(db, code: str) -> ShareLink:
+async def _live_link(db, code: str, request: Request) -> ShareLink:
+    # Someone guessing codes gets locked out after a few misses (an unknown code is the only thing counted).
+    await raise_if_blocked("mobile_bad_code_ip", request)
     link = await db.scalar(select(ShareLink).where(ShareLink.short_code == code.strip().upper()))
     if link is None:
+        await record_ip_failure("mobile_bad_code_ip", request)
         raise HTTPException(status.HTTP_404_NOT_FOUND, "This link was not found")
     if link.expires_at <= datetime.now(UTC):
         raise HTTPException(status.HTTP_410_GONE, "This link has expired. Ask staff for a new one.")
@@ -125,10 +140,11 @@ async def _look_image_url(link: ShareLink) -> str | None:
 
 
 @router.get("/m/{code}", response_model=MobileLookOut)
-async def mobile_page(code: str, db: AsyncDb) -> MobileLookOut:
+async def mobile_page(code: MobileCode, request: Request, db: AsyncDb) -> MobileLookOut:
     """Everything the mobile page shows: the look image (a fresh signed URL), the cart, and any order
     placed since."""
-    link = await _live_link(db, code)
+    await check_ip("mobile_page_ip", request)
+    link = await _live_link(db, code, request)
     cart = await _build_cart(db, link.session_id)
     order = await db.scalar(
         select(Order)
@@ -152,7 +168,9 @@ async def mobile_page(code: str, db: AsyncDb) -> MobileLookOut:
 
 
 @router.post("/m/{code}/checkout", response_model=MobileCheckoutOut)
-async def mobile_checkout(code: str, payload: MobileCheckoutIn, db: AsyncDb) -> MobileCheckoutOut:
+async def mobile_checkout(
+    code: MobileCode, payload: MobileCheckoutIn, request: Request, db: AsyncDb
+) -> MobileCheckoutOut:
     """Place the order for the cart and charge it through the payment provider.
 
     The order is placed first (stock is taken), then the provider is asked to collect the money. If it
@@ -161,7 +179,9 @@ async def mobile_checkout(code: str, payload: MobileCheckoutIn, db: AsyncDb) -> 
     can try
     again. Repeating the same `idempotency_key` returns the same order and payment, charging once.
     """
-    link = await _live_link(db, code)
+    link = await _live_link(db, code, request)
+    await check("mobile_checkout_code", link.short_code)
+    await check_ip("mobile_checkout_ip", request)
     order, created = await place_order(db, link.session_id, payload.idempotency_key)
     provider = get_payment_provider()
 

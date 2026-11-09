@@ -34,6 +34,12 @@ if _WORKER_DIR.is_dir() and str(_WORKER_DIR) not in sys.path:
     sys.path.append(str(_WORKER_DIR))  # appended: never shadows anything the API itself provides
 
 
+@pytest.fixture(autouse=True)
+def isolated_rate_limits(monkeypatch: pytest.MonkeyPatch):
+    """Each test counts against its own Redis keys, so tests never count towards each other's limits."""
+    monkeypatch.setattr(settings, "rate_limit_prefix", f"rl-test-{uuid.uuid4().hex[:10]}")
+
+
 @pytest.fixture
 async def adb() -> AsyncGenerator[AsyncSession, None]:
     engine = create_async_engine(settings.database_url, poolclass=NullPool)

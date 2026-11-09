@@ -17,7 +17,7 @@ async def catalog(
     db: AsyncDb,
     category: Annotated[
         list[ProductCategory] | None,
-        Query(description="Repeat to allow several, e.g. category=top&category=dress"),
+        Query(max_length=6, description="Repeat to allow several, e.g. category=top&category=dress"),
     ] = None,
     min_discount_pct: Annotated[
         int | None, Query(ge=1, le=100, description="Only items marked down by at least this percentage")
@@ -29,7 +29,7 @@ async def catalog(
         bool | None, Query(description="true: only discounted; false: only full price")
     ] = None,
     search: Annotated[str | None, Query(max_length=100, description="Case-insensitive name match")] = None,
-    page: Annotated[int, Query(ge=1)] = 1,
+    page: Annotated[int, Query(ge=1, le=10_000)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> CatalogPage:
     conditions = []

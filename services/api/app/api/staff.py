@@ -17,6 +17,7 @@ from app.api.cart import _require_session
 from app.api.deps import AsyncDb
 from app.api.ws import STAFF_CHANNEL
 from app.core.auth import require_staff
+from app.core.ratelimit import check_session
 from app.core.redis import get_redis
 from app.models import Product, StaffRequest, StaffRequestStatus
 from app.schemas.staff import StaffRequestCreate, StaffRequestOut, StaffRequestStatusIn
@@ -52,6 +53,7 @@ async def create_request(
 ) -> StaffRequest:
     """Ask staff to bring an item (in a size). Asking again for the same open item returns that request
     (200)."""
+    await check_session("request_outfit_session", payload.session_id)
     await _require_session(db, payload.session_id)
     product = await db.get(Product, payload.product_id)
     if product is None:
@@ -63,6 +65,13 @@ async def create_request(
     if payload.size is not None and payload.size not in product.sizes:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY, f"Invalid size {payload.size!r}; available: {product.sizes}"
+        )
+
+    known_colors = {c.get("name") for c in product.colors}
+    if payload.color is not None and payload.color not in known_colors:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Invalid colour {payload.color!r}; available: {sorted(n for n in known_colors if n)}",
         )
 
     duplicate = await db.scalar(

@@ -12,12 +12,14 @@ class BodySizeLimitMiddleware:
     also counts bytes as they arrive (covering chunked uploads and lying headers).
     """
 
-    def __init__(self, app, limits: dict[str, int]):
+    def __init__(self, app, limits: dict[str, int], default: int | None = None):
+        """`limits` maps exact paths to a byte limit; `default` applies to the other paths (None: none)."""
         self.app = app
         self.limits = limits
+        self.default = default
 
     async def __call__(self, scope, receive, send):
-        limit = self.limits.get(scope.get("path")) if scope["type"] == "http" else None
+        limit = self.limits.get(scope.get("path"), self.default) if scope["type"] == "http" else None
         if limit is None or scope["method"] not in ("POST", "PUT", "PATCH"):
             await self.app(scope, receive, send)
             return

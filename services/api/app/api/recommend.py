@@ -43,7 +43,8 @@ def _centroid(vectors: list[list[float]]) -> list[float] | None:
 async def recommend(
     db: AsyncDb,
     product_ids: Annotated[
-        str, Query(description="Comma-separated ids of the items the shopper picked (1 to 5)")
+        str,
+        Query(max_length=250, description="Comma-separated ids of the items the shopper picked (1 to 5)"),
     ],
 ) -> RecommendOut:
     """Suggestions for a selection: more styles like it, and one item for each missing part of the outfit.

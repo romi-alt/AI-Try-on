@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 from app.api.cart import _require_session
 from app.api.deps import AsyncDb
 from app.core.auth import require_admin
+from app.core.ratelimit import check_session
 from app.models import Cart, CartItem, Order, OrderItem, OrderStatus, Product
 from app.schemas.order import CheckoutIn, OrderOut, OrderStatusIn
 
@@ -44,6 +45,7 @@ async def checkout(payload: CheckoutIn, response: Response, db: AsyncDb):
     anything is short the whole checkout is refused (409) and nothing changes. Resending the same
     `idempotency_key` returns the order already placed (200) instead of placing another.
     """
+    await check_session("checkout_session", payload.session_id)
     order, created = await place_order(db, payload.session_id, payload.idempotency_key)
     if not created:
         response.status_code = status.HTTP_200_OK

@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class PresignRequest(BaseModel):
@@ -17,7 +17,7 @@ class PresignResponse(BaseModel):
 
 
 class VerifyRequest(BaseModel):
-    key: str
+    key: str = Field(min_length=1, max_length=512)
 
 
 class VerifyResponse(BaseModel):

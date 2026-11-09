@@ -62,6 +62,7 @@ app = FastAPI(
 app.add_middleware(
     BodySizeLimitMiddleware,
     limits={"/capture": CAPTURE_BODY_LIMIT, "/products/import": csv_import.MAX_BYTES + 1024},
+    default=settings.default_body_limit_bytes,  # every JSON body in this API is a few hundred bytes
 )
 
 # CORS: only the configured browser origins (the kiosk, plus the admin app) may call the API.
@@ -72,7 +73,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "X-Admin-Key", "X-Staff-Key", "X-Request-ID"],
-    expose_headers=["X-Request-ID"],
+    expose_headers=["X-Request-ID", "Retry-After"],
 )
 # Added last so it is outermost and sees every request, including CORS preflights.
 app.add_middleware(RequestLoggingMiddleware)

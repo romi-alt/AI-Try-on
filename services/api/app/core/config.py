@@ -23,6 +23,14 @@ class Settings(BaseSettings):
     # How long the latest state of a job (Redis hash `job:{id}`) is kept after its last update.
     job_state_ttl_seconds: int = 24 * 3600
 
+    # --- rate limiting (see app/core/ratelimit.py for the rules) ---
+    rate_limit_enabled: bool = True
+    # Redis trouble lets requests through instead of refusing them
+    rate_limit_fail_open: bool = True
+    # Multiply every limit, e.g. 2.0 for a shop with several mirrors behind one address
+    rate_limit_scale: float = Field(default=1.0, gt=0)
+    rate_limit_prefix: str = "rl"
+
     # --- WebSocket /ws ---
     ws_heartbeat_seconds: float = 25.0
     ws_subscribe_timeout_seconds: float = 5.0
@@ -40,6 +48,9 @@ class Settings(BaseSettings):
     # checked afterwards: by POST /uploads/verify, and by the sweeper for uploads nobody verified.
     # Keep this at or above the admin app's own limit (10 MB) so its pre-check never disagrees.
     garment_max_bytes: int = 10 * 1024 * 1024
+
+    # Largest request body any endpoint accepts, apart from /capture and /products/import (own limits)
+    default_body_limit_bytes: int = 256 * 1024
 
     # --- webcam captures (POST /capture) ---
     capture_max_bytes: int = 5 * 1024 * 1024
