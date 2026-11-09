@@ -38,3 +38,7 @@ apps/kiosk/public/mediapipe/
 
 # Production secrets
 deploy/.env.production
+
+# Redis snapshots (local dev)
+dump.rdb
+*.rdb
