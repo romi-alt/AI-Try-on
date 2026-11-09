@@ -29,15 +29,20 @@ function LookPanel({ look }: { look: Look }) {
 
   const [checked, setChecked] = useState<Record<string, boolean>>(() => Object.fromEntries(look.items.map((i) => [i.product.id, true])));
   const [sizes, setSizes] = useState<Record<string, string | null>>(() => Object.fromEntries(look.items.map((i) => [i.product.id, i.size])));
+  const [colors, setColors] = useState<Record<string, string | null>>(() =>
+    Object.fromEntries(look.items.map((i) => [i.product.id, i.color ?? (i.product.colors.length === 1 ? i.product.colors[0].name : null)])),
+  );
   const [busy, setBusy] = useState<"cart" | "request" | null>(null);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 
-  const chosen: Selection[] = look.items.filter((i) => checked[i.product.id]).map((i) => ({ ...i, size: sizes[i.product.id] ?? null }));
+  const chosen: Selection[] = look.items.filter((i) => checked[i.product.id]).map((i) => ({ ...i, size: sizes[i.product.id] ?? null, color: colors[i.product.id] ?? null }));
   const missingSize = chosen.find((i) => i.product.sizes.length > 1 && !i.size);
+  const missingColor = chosen.find((i) => i.product.colors.length > 1 && !i.color);
 
   function guard(): boolean {
     if (chosen.length === 0) return setNotice({ kind: "error", text: "Tick at least one item first." }), false;
     if (missingSize) return setNotice({ kind: "error", text: `Choose a size for ${missingSize.product.name}.` }), false;
+    if (missingColor) return setNotice({ kind: "error", text: `Choose a colour for ${missingColor.product.name}.` }), false;
     return true;
   }
 
@@ -95,6 +100,16 @@ function LookPanel({ look }: { look: Look }) {
                     {product.sizes.map((s) => (
                       <button key={s} type="button" aria-pressed={sizes[product.id] === s} onClick={() => (setSizes((z) => ({ ...z, [product.id]: s })), setNotice(null))} className="chip">
                         {s}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {on && product.colors.length > 1 && (
+                  <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label={`Colour for ${product.name}`}>
+                    {product.colors.map((c) => (
+                      <button key={c.name} type="button" aria-pressed={colors[product.id] === c.name} onClick={() => (setColors((z) => ({ ...z, [product.id]: c.name })), setNotice(null))} className="chip gap-2">
+                        <span className="h-5 w-5 rounded-full border border-white/40" style={{ backgroundColor: c.hex }} aria-hidden />
+                        {c.name}
                       </button>
                     ))}
                   </div>
