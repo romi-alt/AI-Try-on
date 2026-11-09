@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -48,6 +49,28 @@ class Settings(BaseSettings):
 
     api_cors_origins: str = "http://localhost:3000,http://localhost:3001"
     admin_api_key: str = Field(default="dev-admin-key", description="Dev-only shared secret")
+    # Floor staff use the staff page with this key (the admin key also works). Dev-only shared secret.
+    staff_api_key: str = Field(default="dev-staff-key", description="Dev-only shared secret")
+
+    # --- "Request Outfit" notifications ---
+    notifier: Literal["console", "whatsapp"] = "console"
+    whatsapp_token: str = ""
+    whatsapp_phone_number_id: str = ""
+    whatsapp_to: str = Field(
+        default="", description="Comma-separated recipient numbers, digits only, with country code"
+    )
+    # A business-initiated WhatsApp message outside a 24 hour customer-service window must be an approved
+    # template. When this is set the notifier sends that template (body parameters: item, size, colour, time)
+    # instead of free text.
+    whatsapp_template_name: str = ""
+    whatsapp_template_language: str = "en"
+    whatsapp_api_base_url: str = "https://graph.facebook.com"
+    whatsapp_api_version: str = "v20.0"
+
+    # --- mobile page (/m/{code}) and payments ---
+    share_link_ttl_seconds: int = 24 * 3600
+    payment_provider: str = "stub"
+    stub_payment_outcome: Literal["paid", "failed"] = "paid"
 
     @property
     def cors_origins(self) -> list[str]:

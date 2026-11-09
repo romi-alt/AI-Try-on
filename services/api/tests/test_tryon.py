@@ -209,3 +209,48 @@ async def test_admin_job_list_needs_the_key(api, adb, s3, rq_queue):
     listed = await api.get("/tryon", headers=ADMIN_HEADERS)
 
     assert listed.status_code == 200 and job_id in [j["id"] for j in listed.json()]
+
+
+async def test_recommended_products_are_recorded_on_the_job(api, adb, s3, rq_queue):
+    sid, anchor, key = await setup_job_inputs(api, adb)
+    suggested = await make_product(adb)
+
+    r = await api.post(
+        "/tryon",
+        json={
+            "session_id": sid,
+            "capture_key": key,
+            "product_ids": [str(anchor.id), str(suggested.id)],
+            "recommended_product_ids": [str(suggested.id), str(suggested.id)],  # a repeat is ignored
+        },
+    )
+
+    assert r.status_code == 202, r.text
+    job = await adb.get(TryOnJob, uuid.UUID(r.json()["job_id"]))
+    assert job.recommended_product_ids == [suggested.id]
+    detail = (await api.get(f"/tryon/{job.id}")).json()
+    assert detail["recommended_product_ids"] == [str(suggested.id)]
+
+
+async def test_a_job_without_recommendations_records_none(api, adb, s3, rq_queue):
+    sid, product, key = await setup_job_inputs(api, adb)
+    r = await post(api, sid, key, [product.id])
+    job = await adb.get(TryOnJob, uuid.UUID(r.json()["job_id"]))
+    assert job.recommended_product_ids == []
+
+
+async def test_recommended_products_must_be_part_of_the_outfit(api, adb, s3, rq_queue):
+    sid, product, key = await setup_job_inputs(api, adb)
+    stranger = await make_product(adb)
+
+    r = await api.post(
+        "/tryon",
+        json={
+            "session_id": sid,
+            "capture_key": key,
+            "product_ids": [str(product.id)],
+            "recommended_product_ids": [str(stranger.id)],
+        },
+    )
+
+    assert r.status_code == 422 and str(stranger.id) in r.json()["detail"]

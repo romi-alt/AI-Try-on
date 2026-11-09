@@ -14,13 +14,14 @@ anything published after the connection opens is delivered.
 
 import asyncio
 import contextlib
+import hmac
 import json
 import logging
 import time
 import uuid
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, WebSocket, status
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from redis.exceptions import RedisError
 
 from app.core.config import settings
@@ -73,10 +74,21 @@ async def session_events(websocket: WebSocket, session: uuid.UUID):
         return
 
     await websocket.accept()
+    await _pump(websocket, pubsub, conn, pattern, {"session_id": str(session)})
+
+
+async def _pump(
+    websocket: WebSocket,
+    pubsub: aioredis.client.PubSub,
+    conn: aioredis.Redis,
+    pattern: str,
+    log_extra: dict,
+) -> None:
+    """Forward the subscription to an accepted socket until either side goes, then clean everything up."""
     started = time.monotonic()
     forwarded = 0
     send_lock = asyncio.Lock()  # the forwarder and the heartbeat share one socket
-    logger.info("ws_connected", extra={"session_id": str(session)})
+    logger.info("ws_connected", extra=log_extra)
 
     async def send(text: str) -> None:
         async with send_lock:
@@ -105,7 +117,7 @@ async def session_events(websocket: WebSocket, session: uuid.UUID):
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
             if not task.cancelled() and isinstance(task.exception(), RedisError):
-                logger.error("ws_redis_failed", extra={"session_id": str(session)}, exc_info=task.exception())
+                logger.error("ws_redis_failed", extra=log_extra, exc_info=task.exception())
                 close_code = status.WS_1011_INTERNAL_ERROR  # ask the client to reconnect
     finally:
         for task in tasks:
@@ -116,9 +128,54 @@ async def session_events(websocket: WebSocket, session: uuid.UUID):
             await websocket.close(code=close_code)
         logger.info(
             "ws_disconnected",
-            extra={
-                "session_id": str(session),
-                "forwarded": forwarded,
-                "seconds": round(time.monotonic() - started, 1),
-            },
+            extra={**log_extra, "forwarded": forwarded, "seconds": round(time.monotonic() - started, 1)},
         )
+
+
+STAFF_CHANNEL = "staff:requests"
+STAFF_AUTH_TIMEOUT_SECONDS = 5.0
+
+
+@router.websocket("/ws/staff")
+async def staff_events(websocket: WebSocket):
+    """Live "Request Outfit" events for the staff page, over the same machinery as `/ws`.
+
+    A browser cannot set headers on a WebSocket and a key in the URL would end up in logs, so the client sends
+    `{"type": "auth", "key": "<staff key>"}` as its first message. The server then subscribes and answers
+    `{"type": "ready"}`; only after that should the client read `GET /requests`, so no change can fall
+    between the
+    list and the stream. Events are `{"type": "request.created" | "request.updated", "request": {...}}`.
+    """
+    origin = websocket.headers.get("origin")
+    if origin is not None and origin not in settings.cors_origins:
+        logger.warning("ws_origin_rejected", extra={"origin": origin})
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+    await websocket.accept()
+    try:
+        first = json.loads(await asyncio.wait_for(websocket.receive_text(), STAFF_AUTH_TIMEOUT_SECONDS))
+        key = first.get("key") if isinstance(first, dict) and first.get("type") == "auth" else None
+    except (TimeoutError, ValueError, WebSocketDisconnect):
+        key = None
+    if not isinstance(key, str) or not _staff_key_ok(key):
+        with contextlib.suppress(Exception):
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    conn = aioredis.Redis.from_url(settings.redis_url, decode_responses=True)
+    pubsub = conn.pubsub()
+    try:
+        await _subscribe(pubsub, STAFF_CHANNEL)
+    except (RedisError, OSError, TimeoutError):
+        logger.exception("ws_staff_subscribe_failed")
+        await _release(pubsub, conn, STAFF_CHANNEL)
+        await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+        return
+    await websocket.send_text(json.dumps({"type": "ready"}))
+    await _pump(websocket, pubsub, conn, STAFF_CHANNEL, {"channel": "staff"})
+
+
+def _staff_key_ok(key: str) -> bool:
+    return any(
+        hmac.compare_digest(key, expected) for expected in (settings.staff_api_key, settings.admin_api_key)
+    )

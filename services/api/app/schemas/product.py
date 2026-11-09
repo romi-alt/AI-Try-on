@@ -55,4 +55,6 @@ class ProductOut(ProductBase):
 
 
 class SimilarProductOut(ProductOut):
-    distance: float
+    # Cosine distance to the reference item; None when no embedding is available and the item is a plain
+    # fallback.
+    distance: float | None

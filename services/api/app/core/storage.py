@@ -61,6 +61,16 @@ def presigned_put(key: str, content_type: str) -> str:
     )
 
 
+def presigned_get(key: str, expires_in: int = 3600) -> str:
+    """A short-lived URL the browser can GET an object from (used to show look images on the mobile page)."""
+    return presign_client().generate_presigned_url(
+        "get_object",
+        Params={"Bucket": settings.s3_bucket, "Key": key},
+        ExpiresIn=expires_in,
+        HttpMethod="GET",
+    )
+
+
 def put_bytes(key: str, data: bytes, content_type: str) -> None:
     internal_client().put_object(Bucket=settings.s3_bucket, Key=key, Body=data, ContentType=content_type)
 

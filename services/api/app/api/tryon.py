@@ -35,6 +35,10 @@ async def create_tryon(payload: TryOnCreate, db: AsyncDb):
     if missing := [str(p) for p in product_ids if p not in found]:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Products not found: {', '.join(missing)}")
 
+    recommended = list(dict.fromkeys(payload.recommended_product_ids))
+    if stray := [str(p) for p in recommended if p not in product_ids]:
+        raise HTTPException(422, f"recommended_product_ids must be part of product_ids: {', '.join(stray)}")
+
     # The key must be one /capture issued to *this* session: sessions cannot use each other's photos.
     if not capture_key_belongs_to(payload.capture_key, payload.session_id):
         raise HTTPException(422, "capture_key does not belong to this session")
@@ -49,7 +53,10 @@ async def create_tryon(payload: TryOnCreate, db: AsyncDb):
         )
 
     job = TryOnJob(
-        session_id=payload.session_id, product_ids=product_ids, person_image_key=payload.capture_key
+        session_id=payload.session_id,
+        product_ids=product_ids,
+        recommended_product_ids=recommended,
+        person_image_key=payload.capture_key,
     )
     db.add(job)
     await db.commit()  # committed before enqueueing so the worker can always find the row

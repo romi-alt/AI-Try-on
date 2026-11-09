@@ -117,3 +117,48 @@ async def test_catalog_rejects_invalid_params(api):
     ):
         r = await api.get("/catalog", params=params)
         assert r.status_code == 422, params
+
+
+async def test_catalog_accepts_several_categories(api, adb, token):
+    await make_product(adb, name=f"{token} tee", category=ProductCategory.top)
+    await make_product(adb, name=f"{token} jeans", category=ProductCategory.bottom)
+    await make_product(adb, name=f"{token} frock", category=ProductCategory.dress)
+    await make_product(adb, name=f"{token} heels", category=ProductCategory.shoes)
+
+    r = await api.get(
+        "/catalog",
+        params=[("search", token), ("category", "top"), ("category", "bottom"), ("category", "dress")],
+    )
+
+    assert {i["name"].split(" ", 1)[1] for i in r.json()["items"]} == {"tee", "jeans", "frock"}
+    assert r.json()["total"] == 3
+    bad = await api.get("/catalog", params=[("category", "top"), ("category", "hats")])
+    assert bad.status_code == 422
+
+
+async def test_min_discount_is_exact_at_the_boundary(api, adb, token):
+    await make_product(adb, name=f"{token} half", price_pkr=1000, sale_price_pkr=500)  # exactly 50% off
+    await make_product(adb, name=f"{token} more", price_pkr=1000, sale_price_pkr=400)
+    await make_product(adb, name=f"{token} almost", price_pkr=1000, sale_price_pkr=501)  # 49.9% off
+    await make_product(adb, name=f"{token} full", price_pkr=1000, sale_price_pkr=None)
+    await make_product(adb, name=f"{token} same", price_pkr=1000, sale_price_pkr=1000)
+
+    r = await api.get("/catalog", params={"search": token, "min_discount_pct": 50})
+
+    assert {i["name"].split(" ", 1)[1] for i in r.json()["items"]} == {"half", "more"}
+    assert (await api.get("/catalog", params={"min_discount_pct": 0})).status_code == 422
+    assert (await api.get("/catalog", params={"min_discount_pct": 101})).status_code == 422
+
+
+async def test_new_within_days_keeps_only_recent_products(api, adb, token):
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    await make_product(adb, name=f"{token} fresh", created_at=now - timedelta(days=2))
+    await make_product(adb, name=f"{token} edge", created_at=now - timedelta(days=29))
+    await make_product(adb, name=f"{token} old", created_at=now - timedelta(days=45))
+
+    r = await api.get("/catalog", params={"search": token, "new_within_days": 30})
+
+    assert {i["name"].split(" ", 1)[1] for i in r.json()["items"]} == {"fresh", "edge"}
+    assert (await api.get("/catalog", params={"new_within_days": 0})).status_code == 422

@@ -15,7 +15,10 @@ from app.api import (
     jobs,
     orders,
     products,
+    recommend,
     sessions,
+    share,
+    staff,
     tryon,
     uploads,
     ws,
@@ -72,8 +75,11 @@ app.add_middleware(RequestLoggingMiddleware)
 app.include_router(health.router)
 app.include_router(catalog.router)
 app.include_router(products.router)
+app.include_router(recommend.router)
 app.include_router(sessions.router)
 app.include_router(cart.router)
+app.include_router(share.router)
+app.include_router(staff.router)
 app.include_router(orders.router)
 app.include_router(capture.router)
 app.include_router(uploads.router)

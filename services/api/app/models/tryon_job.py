@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -39,6 +39,11 @@ class TryOnJob(Base):
         server_default="queued",
     )
     progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # The subset of product_ids the shopper added from the "More styles" / "Complete your look" suggestions
+    # (used for the recommendation analytics).
+    recommended_product_ids: Mapped[list[uuid.UUID]] = mapped_column(
+        ARRAY(UUID(as_uuid=True)), nullable=False, default=list, server_default=text("'{}'::uuid[]")
+    )
     person_image_key: Mapped[str] = mapped_column(String(512), nullable=False)
     result_url: Mapped[str | None] = mapped_column(Text)
     error: Mapped[str | None] = mapped_column(Text)

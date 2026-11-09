@@ -14,6 +14,11 @@ class TryOnCreate(BaseModel):
         min_length=1, max_length=512, description="Key returned by POST /capture for this session"
     )
     product_ids: list[uuid.UUID] = Field(min_length=1, max_length=MAX_PRODUCTS_PER_JOB)
+    recommended_product_ids: list[uuid.UUID] = Field(
+        default_factory=list,
+        max_length=MAX_PRODUCTS_PER_JOB,
+        description="The part of product_ids the shopper added from the recommendations (for analytics)",
+    )
 
 
 class TryOnAccepted(BaseModel):
@@ -28,6 +33,7 @@ class TryOnJobOut(BaseModel):
     id: uuid.UUID
     session_id: uuid.UUID
     product_ids: list[uuid.UUID]
+    recommended_product_ids: list[uuid.UUID]
     status: JobStatus
     progress: int
     capture_key: str = Field(validation_alias="person_image_key")

@@ -27,6 +27,13 @@ class OrderStatus(enum.StrEnum):
     cancelled = "cancelled"  # not going ahead; its items went back into stock
 
 
+class PaymentStatus(enum.StrEnum):
+    unpaid = "unpaid"  # nothing was charged: the shopper pays at the counter
+    pending = "pending"  # a payment provider has the payment but has not confirmed it
+    paid = "paid"
+    failed = "failed"
+
+
 class Order(Base):
     """A placed order: the cart as it was at checkout, with prices copied so catalog edits cannot alter it."""
 
@@ -56,6 +63,14 @@ class Order(Base):
         server_default=OrderStatus.placed.value,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    payment_status: Mapped[PaymentStatus] = mapped_column(
+        Enum(PaymentStatus, name="payment_status", values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+        default=PaymentStatus.unpaid,
+        server_default=PaymentStatus.unpaid.value,
+    )
+    payment_provider: Mapped[str | None] = mapped_column(String(40))
+    payment_reference: Mapped[str | None] = mapped_column(String(120))
     # When it was last collected or cancelled; null while it is still waiting.
     status_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

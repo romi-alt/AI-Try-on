@@ -44,21 +44,35 @@ async def checkout(payload: CheckoutIn, response: Response, db: AsyncDb):
     anything is short the whole checkout is refused (409) and nothing changes. Resending the same
     `idempotency_key` returns the order already placed (200) instead of placing another.
     """
-    await _require_session(db, payload.session_id)
+    order, created = await place_order(db, payload.session_id, payload.idempotency_key)
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return order
+
+
+async def place_order(
+    db, session_id: uuid.UUID, idempotency_key: uuid.UUID | None = None
+) -> tuple[Order, bool]:
+    """Turn the session's cart into an order. Returns `(order, created)`; `created` is False for a replayed
+    key.
+
+    Shared by the kiosk checkout (pay at the counter) and the mobile page checkout (paid through a provider).
+    Raises HTTP 404 (no such session) or 409 (empty cart, or not enough stock) without changing anything.
+    """
+    await _require_session(db, session_id)
     # The same row lock as the cart routes: a checkout and a simultaneous add or removal happen one at a time.
     cart = (
-        await db.execute(select(Cart).where(Cart.session_id == payload.session_id).with_for_update())
+        await db.execute(select(Cart).where(Cart.session_id == session_id).with_for_update())
     ).scalar_one_or_none()
 
-    if payload.idempotency_key is not None:
+    if idempotency_key is not None:
         existing = await db.scalar(
             select(Order)
             .options(_with_items())
-            .where(Order.session_id == payload.session_id, Order.idempotency_key == payload.idempotency_key)
+            .where(Order.session_id == session_id, Order.idempotency_key == idempotency_key)
         )
         if existing:
-            response.status_code = status.HTTP_200_OK
-            return existing
+            return existing, False
 
     lines = []
     if cart:
@@ -102,8 +116,8 @@ async def checkout(payload: CheckoutIn, response: Response, db: AsyncDb):
         raise HTTPException(status.HTTP_409_CONFLICT, "Not enough stock. " + "; ".join(short))
 
     order = Order(
-        session_id=payload.session_id,
-        idempotency_key=payload.idempotency_key,
+        session_id=session_id,
+        idempotency_key=idempotency_key,
         pickup_code=await _unused_code(db),
         item_count=sum(line.quantity for line in lines),
         subtotal_pkr=0,
@@ -137,12 +151,12 @@ async def checkout(payload: CheckoutIn, response: Response, db: AsyncDb):
         "order_placed",
         extra={
             "order_id": str(order_id),
-            "session_id": str(payload.session_id),
+            "session_id": str(session_id),
             "item_count": order.item_count,
             "subtotal_pkr": order.subtotal_pkr,
         },
     )
-    return await db.scalar(select(Order).options(_with_items()).where(Order.id == order_id))
+    return await db.scalar(select(Order).options(_with_items()).where(Order.id == order_id)), True
 
 
 async def _unused_code(db) -> str:
@@ -199,17 +213,7 @@ async def set_order_status(order_id: uuid.UUID, payload: OrderStatusIn, db: Asyn
         )
 
     if target == OrderStatus.cancelled:
-        back: dict[uuid.UUID, int] = {}
-        for item in order.items:
-            back[item.product_id] = back.get(item.product_id, 0) + item.quantity
-        # Same lock order as checkout (by product id), so a cancel and a checkout cannot deadlock.
-        products = (
-            await db.execute(
-                select(Product).where(Product.id.in_(sorted(back))).order_by(Product.id).with_for_update()
-            )
-        ).scalars()
-        for product in products:
-            product.stock += back[product.id]
+        await return_stock(db, order)
 
     order.status = target
     order.status_changed_at = func.now()
@@ -222,3 +226,21 @@ async def set_order_status(order_id: uuid.UUID, payload: OrderStatusIn, db: Asyn
         .where(Order.id == order_id)
         .execution_options(populate_existing=True)
     )
+
+
+async def return_stock(db, order: Order) -> None:
+    """Put every item of `order` back into stock. A product that has since been deleted is skipped.
+
+    The quantities are added to whatever the stock is now. Products are locked in id order, like checkout, so
+    a cancel and a checkout cannot deadlock.
+    """
+    back: dict[uuid.UUID, int] = {}
+    for item in order.items:
+        back[item.product_id] = back.get(item.product_id, 0) + item.quantity
+    products = (
+        await db.execute(
+            select(Product).where(Product.id.in_(sorted(back))).order_by(Product.id).with_for_update()
+        )
+    ).scalars()
+    for product in products:
+        product.stock += back[product.id]
