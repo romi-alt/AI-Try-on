@@ -46,6 +46,22 @@ async def test_cors_preflight_allows_the_kiosk_origin(plain_api):
     assert "access-control-allow-credentials" not in r.headers
 
 
+async def test_cors_preflight_allows_the_staff_and_admin_keys_and_patch(plain_api):
+    """The staff page sends X-Staff-Key with PATCH from the kiosk origin; the admin app sends X-Admin-Key."""
+    for header in ("x-staff-key", "x-admin-key"):
+        r = await plain_api.options(
+            "/requests/abc",
+            headers={
+                "Origin": KIOSK,
+                "Access-Control-Request-Method": "PATCH",
+                "Access-Control-Request-Headers": f"content-type,{header}",
+            },
+        )
+        assert r.status_code == 200, header
+        assert header in r.headers["access-control-allow-headers"].lower()
+        assert "PATCH" in r.headers["access-control-allow-methods"]
+
+
 async def test_cors_preflight_rejects_other_origins(plain_api):
     r = await plain_api.options(
         "/cart/add", headers={"Origin": STRANGER, "Access-Control-Request-Method": "POST"}

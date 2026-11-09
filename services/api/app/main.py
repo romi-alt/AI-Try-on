@@ -66,7 +66,7 @@ app.add_middleware(
     allow_origins=settings.cors_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-Admin-Key", "X-Request-ID"],
+    allow_headers=["Content-Type", "X-Admin-Key", "X-Staff-Key", "X-Request-ID"],
     expose_headers=["X-Request-ID"],
 )
 # Added last so it is outermost and sees every request, including CORS preflights.
