@@ -87,6 +87,14 @@ shopper after a quiet spell waits through (`--idle-timeout`, default 30 s, is ho
 job). Raise `--workers-min` to 1 to keep one worker warm during opening hours, at the cost of paying for it. The
 worker's `CATVTON_TIMEOUT_SECONDS` (default 420) must cover a cold start plus a render.
 
+## Free, private try-on on Colab (no RunPod or FASHN account)
+
+`colab/catvton_tryon.ipynb` runs the same CatVTON model on Colab's free T4, to try your own photos on garment photos
+and make demo renders. Upload it to <https://colab.research.google.com>, switch the runtime to a T4 GPU and run the
+cells in order; photos stay inside the Colab session. Edit `colab/build_notebook.py` (not the `.ipynb`) and run
+`python colab/build_notebook.py` to regenerate it. It has been syntax-checked only: its author did not run it on a
+Colab GPU (the detectron2 build is the likeliest step to need a retry).
+
 ## Benchmark
 
 ```bash
