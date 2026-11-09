@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     models_dir: str = "~/.cache/tryon-models"
 
     # --- provider selection ---
-    tryon_provider: Literal["mock", "fashn"] = "mock"
+    tryon_provider: Literal["mock", "fashn", "catvton"] = "mock"
 
     mock_duration_seconds: float = 8.0
     mock_steps: int = 8
@@ -60,6 +60,17 @@ class Settings(BaseSettings):
     fashn_mode: Literal["performance", "balanced", "quality"] = "balanced"
     fashn_poll_interval_seconds: float = 3.0
     fashn_timeout_seconds: float = 180.0  # per garment
+
+    # CatVTON on a RunPod serverless endpoint (see services/catvton). Never commit a real key.
+    runpod_api_key: str | None = None
+    runpod_endpoint_id: str | None = None
+    runpod_base_url: str = "https://api.runpod.ai/v2"
+    catvton_poll_interval_seconds: float = 2.0
+    # A cold start loads the model on a fresh GPU worker; allow for it on top of the render itself.
+    catvton_timeout_seconds: float = 420.0
+    catvton_steps: int = 30
+    catvton_guidance_scale: float = 2.5
+    catvton_seed: int = 555
 
     @property
     def presign_endpoint(self) -> str:

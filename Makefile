@@ -68,13 +68,22 @@ api-shell: ## Open a shell in the api container
 psql: ## Open psql against the dev database
 	$(COMPOSE) exec postgres psql -U $${POSTGRES_USER:-tryon} -d $${POSTGRES_DB:-tryon}
 
-.PHONY: test
+.PHONY: embed
 embed: ## Compute FashionCLIP embeddings for products that have none (needs the stack up; first run downloads the model)
 	$(COMPOSE) exec assets-worker python -m worker.embed_products --missing
 
+.PHONY: test
 test: ## Run API and worker tests (needs the stack up and `make migrate` done)
 	$(API_EXEC) pytest -q
 	$(COMPOSE) exec worker pytest -q
+
+.PHONY: test-catvton
+test-catvton: ## Run the CatVTON GPU service's unit tests (fake model objects: no GPU or Docker needed)
+	cd services/catvton && python -m pytest -q
+
+.PHONY: benchmark-fake
+benchmark-fake: ## Try the latency/cost benchmark against the built-in fake RunPod (simulated numbers)
+	cd services/worker && python -m worker.benchmark --fake --jobs 5 --price-per-second 0.0003
 
 .PHONY: test-kiosk
 test-kiosk: ## Run the kiosk's unit tests (host Node; no services needed)

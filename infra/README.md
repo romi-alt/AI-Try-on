@@ -9,7 +9,8 @@ Local development infrastructure, driven from the repo root `Makefile`.
 | minio        | `minio/minio`              | 9000/9001 | S3-compatible stand-in for Cloudflare R2|
 | minio-init   | `minio/mc`                 | –         | creates the bucket, sets public read    |
 | api          | `../services/api`          | 8000      | FastAPI, hot reload                     |
-| worker       | `../services/worker`       | –         | consumes `tryon:jobs`                   |
+| worker       | `../services/worker`       | –         | consumes the `tryon` queue              |
+| assets-worker| `../services/worker`       | –         | consumes the `assets` queue (embeddings, background removal) |
 | kiosk        | `../apps/kiosk`            | 3000      | Next.js dev server                      |
 | admin        | `../apps/admin`            | 3001      | Next.js dev server                      |
 

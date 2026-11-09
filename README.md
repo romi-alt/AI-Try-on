@@ -1,14 +1,18 @@
 # ELEVARIQ Virtual Try on Mirror
 
-The ELEVARIQ Virtual Try on Mirror: an AI virtual try-on mirror. A laptop webcam acts as the mirror: the shopper picks a
-outfit, the kiosk captures a frame, and a worker renders the items onto them.
+The ELEVARIQ Virtual Try on Mirror is an AI virtual try-on mirror for a clothing shop. A portrait touch screen with a
+webcam acts as the mirror: the shopper picks items, the kiosk guides them into position and takes a photo, and a
+worker renders the items onto them. They can then add pieces to a cart, send the look and cart to their phone with a
+QR code, or ask a team member to bring an item in their size.
 
 ```
-apps/kiosk      Next.js 14 (App Router, TS, Tailwind, Zustand) — the mirror UI
-apps/admin      Next.js 14 — catalog, sessions and job monitoring
-services/api    FastAPI — catalog, sessions, cart, capture upload, try-on jobs
-services/worker Python — RQ worker that renders try-ons
-infra           docker-compose: Postgres + pgvector, Redis, MinIO (local R2)
+apps/kiosk       Next.js 14 (App Router, TS, Tailwind, Zustand, TanStack Query) — the mirror UI (1080x1920),
+                 plus the staff page (/staff) and the shopper's mobile page (/m/CODE)
+apps/admin       Next.js 14 + NextAuth — products, CSV import, image processing, analytics, orders, jobs
+services/api     FastAPI — catalog, recommendations, sessions, cart, checkout, capture, try-on jobs, staff requests
+services/worker  Python — RQ workers: try-on rendering (mock, FASHN, CatVTON) and image assets (embeddings, cutouts)
+services/catvton CatVTON as a RunPod serverless GPU worker (Docker image, handler, deploy and benchmark tooling)
+infra            docker-compose: Postgres + pgvector, Redis, MinIO (local R2)
 ```
 
 ## How a try-on flows
@@ -20,7 +24,7 @@ infra           docker-compose: Postgres + pgvector, Redis, MinIO (local R2)
 3. The kiosk calls `POST /tryon` with `session_id`, `capture_key` and `product_ids`. The API inserts a
    `queued` job in Postgres, pushes it onto an **RQ** queue in Redis, and returns the `job_id` immediately.
 4. The **worker** picks the job up and runs it through the configured provider (`TRYON_PROVIDER`: `mock`
-   or `fashn`). After every progress step it records the latest state in the Redis hash `job:{id}` and
+   `fashn` or `catvton`). After every progress step it records the latest state in the Redis hash `job:{id}` and
    publishes `{job, status, pct}` to the channel `session:{session_id}:job`, in one transaction.
 5. When rendering finishes the worker uploads the result to object storage and publishes
    `{job, status: "done", pct: 100, url}`; on any failure it publishes `{job, status: "failed", pct, error}`
@@ -37,6 +41,7 @@ Products carry a 512-d pgvector embedding; `GET /products/{id}/similar` returns 
 |------------------|--------------|
 | `mock` (default) | Offline. Waits `MOCK_DURATION_SECONDS` (8) while reporting progress, then returns the photo with the garments and a "MOCK TRY-ON" banner. `MOCK_FAIL=true` forces failures. |
 | `fashn`          | Calls the hosted [FASHN](https://docs.fashn.ai) API. Needs `FASHN_API_KEY`. Tops, bottoms and dresses only; outfits are applied one garment at a time. |
+| `catvton`        | [CatVTON](https://github.com/Zheng-Chong/CatVTON) running on your own **RunPod serverless** endpoint (scale to zero), called over HTTPS. Needs `RUNPOD_API_KEY` and `RUNPOD_ENDPOINT_ID`. Tops, bottoms and dresses; the whole outfit is one request; progress comes from the diffusion steps. Image, handler, deploy script and benchmark are in [`services/catvton`](services/catvton/README.md). **The GPU side has not been built or run: see "Verification status" below.** |
 
 ## Prerequisites
 
@@ -64,7 +69,8 @@ Then open:
 | What            | URL                          |
 |-----------------|------------------------------|
 | Kiosk           | http://localhost:3000        |
-| Admin           | http://localhost:3001        |
+| Staff page      | http://localhost:3000/staff (staff key, dev default `dev-staff-key`) |
+| Admin           | http://localhost:3001 (dev sign-in `admin@example.com` / `dev-admin-password`) |
 | API docs        | http://localhost:8000/docs   |
 | MinIO console   | http://localhost:9001 (creds in `.env`) |
 
@@ -72,68 +78,102 @@ The browser will ask for camera permission once the shopper agrees on the consen
 
 ## The kiosk
 
-`apps/kiosk` is what the shopper uses, on a laptop-sized screen:
+`apps/kiosk` is a fullscreen **1080x1920 portrait** touch UI in a dark glass style (every tappable target is at least
+64 px). Flow:
 
-1. **Consent.** Nothing is captured and the camera stays off until the shopper agrees. Agreeing starts the session.
-   The consent text is placeholder copy and needs review before real use.
-2. **Choose.** The catalog (`GET /catalog`) with category tabs, an *On sale* toggle, search and *Show more* paging.
-   Up to 5 items can be picked as one outfit, and the outfit survives filter changes.
-3. **Try on.** A 3-2-1 countdown, then one frame is cropped to a 3:4 portrait (a landscape webcam would be
-   refused by the API) and sent to `POST /capture`, then `POST /tryon`.
-4. **Watch.** Progress comes over a WebSocket held open for the whole session. It reconnects with backoff,
-   replaces a connection that has gone silent, and polls `GET /jobs/{id}` every 2 seconds while the socket is
-   down, so a look still finishes if WebSockets are blocked. Failures show the worker's readable message.
-5. **Result.** The result image, with a size and colour choice per item and *Add to cart*. The cart drawer shows
-   the API's totals. The camera is switched off while the result is shown.
-6. **Checkout.** *Place order* in the cart drawer creates an order for everything in the cart and shows a six-character
-   pickup code, the items and the total. **There is no online payment: the shopper pays at the counter** and shows the
-   code. The items are taken out of stock at that moment; if some ran out meanwhile the shopper is told which and
-   nothing is ordered. If the answer is lost on the way back, trying again returns the same order rather than a second
-   one. *Done* ends the session, *Keep shopping* goes back to the cart.
+1. **Attract screen.** After 60 seconds without input (45 s, then a 15 s "Are you still there?" countdown) the kiosk
+   returns to the attract screen and **resets the session**: the camera and live connection close and the last
+   shopper's outfit, photo and cart are forgotten. Touching the screen starts again. The timer is paused while a photo
+   is being taken or a look is rendering, and uses the real clock.
+2. **Shop.** Top tabs (Clothing, Accessories, Shoes, Bags, Flat 50% Off, New Arrivals), a 3-column product grid, a left
+   sidebar (Shop, Scanner, Cart, Help, Settings) and a **Selected items** tray at the top. Tapping a product opens a
+   detail panel with size and colour selectors. Prices are in PKR, with the regular price struck through on sale items.
+   Data comes from the API through TanStack Query.
+3. **Consent.** Nothing is captured and the camera stays off until the shopper agrees (the consent text is placeholder
+   copy and needs review before real use).
+4. **Capture.** `getUserMedia` asks for 1920x1080 and shows a mirrored preview. **MediaPipe Pose Landmarker** (WASM, in a
+   Web Worker) looks at every frame and the screen says *Step back* until head and ankles are in view, *Center
+   yourself* when off-centre, *Hold still* when steady. After one second of steadiness a 3-2-1 *Strike a pose* countdown
+   runs; the **sharpest of the last 5 frames** (Laplacian variance) is cropped to 3:4 and sent to `POST /capture`. If
+   pose guidance cannot load there is a *Take my photo* button that runs the same countdown by hand. Cancel at any time
+   releases the camera.
+5. **Progress.** `POST /tryon`, then a circular progress ring with the percentage and *Almost there...* over a blurred
+   copy of the shopper's own photo. The socket reconnects with exponential backoff; while it is down the kiosk polls
+   `GET /jobs/{id}` every 2 s. After 60 s *Try again* appears (the job keeps running meanwhile).
+6. **Result.** The finished look is preloaded and fades in only once fully loaded. A *Look 1 / Look 2* switcher keeps
+   every look from the visit. The side panel *Add to cart?* has a checkbox, size and colour per item, plus
+   **Complete your look** (one best match for each missing top / bottom / shoes / bag) and **More styles** (nearest
+   neighbours in the same category), each with a one-tap *Try on*. Buttons: **Add Selected to Cart**, **Request Outfit**,
+   **Back to Shop**.
+7. **Cart and checkout.** Quantities, removal, and *Place order* (pay at the counter, six-character pickup code, idempotent).
 
-Leaving the page (Exit) ends the session and closes the live connection. In the cart drawer each line has a
-minus and plus to change its quantity (plus stops at the product's stock, counted across all its sizes and
-colours) and a *Remove* button that removes the whole line. Every control in the drawer is disabled while one change
-is running. Cart changes are sent one at a time in the order they were made, and an answer that arrives after the shopper has left is discarded.
+**Add Selected to Cart** saves the items and shows a **QR code** to `/m/{short_code}` on the shopper's phone. **Request
+Outfit** asks staff to bring an item in a size.
 
-**Idle timeout.** After 60 seconds without input (consent, choosing, result or error screens) an "Are you still
-there?" screen covers the mirror and counts down 15 seconds. *I'm still here*, tapping the screen or pressing a
-key keeps the session. Otherwise the session ends, the camera and live connection are closed and the kiosk
-returns to the start screen, so the next shopper never sees the last one's outfit or photo. Moving the mouse,
-scrolling or touching the screen keeps an unwarned session alive but does not dismiss the warning, so a tap
-cannot also press a product underneath it. The timer is paused while the countdown, upload or render is under
-way. It uses the real clock, so a laptop that sleeps past the deadline resets as soon as it wakes.
+Configuration is in `apps/kiosk/.env.example`. `NEXT_PUBLIC_*` values are read at build time, so rebuild after changing
+them. The build downloads the MediaPipe pose model and copies its WASM into `public/mediapipe` (`npm run pose-assets`,
+needs network). **Set `NEXT_PUBLIC_PUBLIC_URL` to an address a phone can reach**, or the QR code will point at the kiosk's
+own `localhost`.
 
-Configuration is in `apps/kiosk/.env.example` (`NEXT_PUBLIC_API_URL`, optional `NEXT_PUBLIC_WS_URL`, and
-`NEXT_PUBLIC_IDLE_WARN_SECONDS` / `NEXT_PUBLIC_IDLE_GRACE_SECONDS`; a warn time of 0 turns the timeout off).
-These are read at build time, so rebuild after changing them. Unit tests (`make test-kiosk`) cover the live-update
-follower, the store's async flow, the API client, the photo crop and the idle timer; they need no services.
+### Recommendations
+
+Products carry a 512-d **FashionCLIP** embedding (computed by the assets worker: `make embed` for products without one;
+admin buttons recompute some or all). `GET /recommend?product_ids=...` returns:
+
+- **More styles**: nearest neighbours of the selected items in the same category, by pgvector cosine distance.
+- **Complete your look**: for each missing category among top, bottom, shoes and bag (a dress covers top and bottom), the
+  best product that passes simple rules: colour harmony with everything selected (neutrals go with anything, then tonal,
+  analogous, complementary; the awkward middle of the wheel is out) and a price within 4x of the selection's average;
+  candidates are ranked by embedding similarity. Without embeddings it falls back to the newest in the category.
+
+### The mobile page and the staff page
+
+Both live in the kiosk app and are separate from the mirror UI.
+
+- **`/m/CODE`** (the QR code) is a phone page: the shopper's look, their cart, and a **Pay** button that goes through a
+  payment provider interface (`services/api/app/services/payments.py`; only a **stub** is included, it approves every
+  payment). The code is random, expires after 24 hours (`SHARE_LINK_TTL_SECONDS`) and only reaches that session's look
+  and cart. A declined payment cancels the order, restores stock and leaves the cart as it was; retries after a lost
+  connection reuse an idempotency key so nobody is charged twice. `/m` lets a phone type the code if it cannot scan.
+- **`/staff`** is for the shop floor. Sign in with the staff key (`STAFF_API_KEY`). It lists open **Request Outfit**
+  requests (product, size, colour, which mirror session, how long ago) and updates **live** over `WS /ws/staff` on every
+  staff screen: *Bringing it* shows "On the way" everywhere, *Done* removes the request everywhere. If the socket drops it
+  reconnects and re-reads the list.
+- **Notifications.** Creating a request also notifies staff through a pluggable notifier (`NOTIFIER`): `console` for
+  development, or `whatsapp` for the WhatsApp Cloud API (`WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_TO`; set
+  `WHATSAPP_TEMPLATE_NAME` to send an approved template, which WhatsApp requires outside its 24-hour window). The WhatsApp
+  notifier is tested against a fake server only.
 
 ## The admin app
 
-`apps/admin` (http://localhost:3001) is for the shop's staff. Every request carries the dev admin key
-(`X-Admin-Key`, see `apps/admin/.env.example`).
+`apps/admin` (http://localhost:3001) is for the shop's staff and owners.
 
-- **Overview.** Today's counters and the queue depth from `GET /admin/stats`.
-- **Products.** The catalog (`GET /catalog`, sold-out items included) with category, on-sale and search filters and
-  paging. Stock is edited in place. Add and edit use a side form: price, optional sale price, stock, sizes, colours
-  and a garment image (plus an optional mask). Images go in three steps: a presigned URL from `POST /uploads/presign`, a PUT
-  straight to the bucket, and `POST /uploads/verify`, which deletes and refuses a file that is too big (see
-  `services/api/README.md`). **The bucket must allow CORS PUT from the admin origin** (MinIO does by
-  default; for Cloudflare R2 add a CORS rule). Deleting a product that is in a cart is refused by the API, and the
-  page suggests setting its stock to 0 instead.
-- **Orders.** The latest orders with pickup code, status, items and total, newest first. Filter by All, Waiting,
-  Collected or Cancelled, and find one by its code (case does not matter). A waiting order has *Mark collected*
-  (once the shopper has paid at the counter and taken their items) and *Cancel* (asks first, then puts the items back
-  into stock). Both are final. If someone else already closed the order the other way, the page says so and shows
-  the real state. Prices are as they were when the order was placed.
-- **Sessions.** The latest sessions with their try-on counts.
-- **Try-on jobs.** The latest jobs, refreshed every few seconds, with product names, progress, duration, the
-  worker's error for failed ones and, for finished ones, a link to the result. Result links are signed and expire,
-  so an expired one is shown as such. Results are shoppers' photos, so they open on request rather than showing
-  as thumbnails.
+**Sign-in.** NextAuth with an email and password. Who may sign in is the `ADMIN_USERS` allow-list (`email=password hash`,
+hashes made with `npm run hash-password -w @tryon/admin -- 'password'`; scrypt, nothing extra to install). Every page is
+protected, failed sign-ins are rate limited, and the session is an HttpOnly cookie. *This is email and password rather
+than an emailed magic link, which would need an SMTP service; NextAuth's email provider can replace it if you have one.*
+The browser never sees the API's admin key: it calls the app's own `/api/proxy`, which checks the session and adds
+`X-Admin-Key` on the server (`ADMIN_API_KEY`, `API_URL`).
 
-Unit tests (`make test-admin`) cover the form validation and payload building, the API client and the helpers.
+- **Overview.** Today's counters and the queue depth.
+- **Products.** Search and filters, stock edited in place, add/edit with SKU, price, sale price, sizes, colours and an
+  image uploaded straight to the bucket (presigned PUT; the bucket must allow CORS PUT from the admin origin). **Remove
+  background** queues a job on the assets worker: **rembg** cuts the garment out, **SAM 2** refines the outline into a
+  garment mask, the original upload is kept, and the new embedding is stored before the product shows *Cutout ready*.
+  Status (queued, processing, ready, failed with the reason) updates live. **Re-embed**, **Embed missing** and **Re-embed
+  all** recompute FashionCLIP embeddings.
+- **Import CSV.** Upload a CSV, *Check file* (a dry run that lists every problem with its line number), then *Import*.
+  Rows with an existing SKU update that product (empty cells keep the current value, `none` removes a sale price); other
+  rows create one. It is all or nothing, so a bad row never leaves half a file imported. Columns:
+  `sku,name,category,price_pkr,sale_price_pkr,sizes,colors,stock,image_url` (sizes `S|M|L`, colours `Name:#hex|...`). A
+  template can be downloaded from the page.
+- **Analytics.** Try-ons per product, the **try-on to cart rate**, and the **top recommended pairings** (suggestions
+  shoppers added to a look, with the item they were added to), for the last 7, 30 or 90 days. A try-on is a finished look;
+  an item counts as added when the same session put it in the cart (or ordered it) at or after the look. Definitions are
+  in `services/api/app/api/analytics.py`.
+- **Orders**, **Sessions**, **Try-on jobs**: as before (mark orders collected or cancelled, watch jobs).
+
+Unit tests (`make test-admin`) cover sign-in, the proxy, the form logic, the CSV helpers and the API client.
 
 ## Make targets
 
@@ -146,6 +186,9 @@ Unit tests (`make test-admin`) cover the form validation and payload building, t
 | `make seed`       | Seed 20 demo products (idempotent)                            |
 | `make lifecycle`  | Add the bucket lifecycle backstop for `captures/`             |
 | `make test`       | Run API and worker tests                                      |
+| `make embed`      | Compute embeddings for products that have none                |
+| `make test-catvton` | Run the CatVTON GPU service's unit tests (no GPU needed)    |
+| `make benchmark-fake` | Try the latency/cost benchmark against a fake RunPod       |
 | `make test-kiosk` | Run the kiosk's unit tests (host Node, no services)           |
 | `make test-admin` | Run the admin app's unit tests (host Node, no services)       |
 | `make lint`       | ESLint + Ruff across all packages                             |
@@ -180,25 +223,48 @@ Each package has its own `.env.example` with localhost defaults for this mode.
 ## Configuration & secrets
 
 - Every `.env.example` is safe to commit; copy it and edit the copy. `.env*` files
-  are git-ignored except the examples.
-- Defaults are dev-only (`minioadmin`, `dev-admin-key`, …). Rotate everything before
-  any shared deployment.
-- Admin endpoints use a shared `X-Admin-Key` header for now. Replace
-  `services/api/app/core/auth.py` with a real identity provider before going public.
+  are git-ignored except the examples. **Never commit a real key.**
+- Defaults are dev-only (`minioadmin`, `dev-admin-key`, `dev-staff-key`, the `admin@example.com` /
+  `dev-admin-password` sign-in, `NEXTAUTH_SECRET`). Rotate everything before any shared deployment.
+- The API's admin endpoints use a shared `X-Admin-Key` and the staff endpoints a shared `X-Staff-Key`. The admin *app* has
+  real sign-in and keeps the admin key on its server; the keys themselves are still shared secrets between servers.
 - Switching from MinIO to Cloudflare R2 is env-only; see `infra/README.md`.
-- Real try-on: set `TRYON_PROVIDER=fashn` and `FASHN_API_KEY` in the root `.env`. The provider interface is
-  in `services/worker/worker/providers/base.py`.
+- Real try-on: `TRYON_PROVIDER=fashn` with `FASHN_API_KEY`, or `TRYON_PROVIDER=catvton` with `RUNPOD_API_KEY` and
+  `RUNPOD_ENDPOINT_ID` (see `services/catvton/README.md`). The provider interface is in
+  `services/worker/worker/providers/base.py`.
+- New settings in this release: `NEXT_PUBLIC_PUBLIC_URL`, `NEXT_PUBLIC_POSE_DELEGATE`, `NEXT_PUBLIC_TRYON_SLOW_SECONDS`
+  (kiosk); `STAFF_API_KEY`, `NOTIFIER`, `WHATSAPP_*`, `PAYMENT_PROVIDER`, `STUB_PAYMENT_OUTCOME`, `SHARE_LINK_TTL_SECONDS`,
+  `ASSETS_QUEUE_NAME` (API); `WORKER_QUEUES`, `SAM2_CHECKPOINT`, `REMBG_MODEL`, `FASHION_CLIP_MODEL`, `RUNPOD_*`,
+  `CATVTON_*` (worker); `NEXTAUTH_URL`, `NEXTAUTH_SECRET`, `ADMIN_USERS`, `ADMIN_API_KEY`, `API_URL` (admin).
+
+## Verification status
+
+What the automated tests and the browser runs in this repository cover, and what nobody has been able to check:
+
+**Verified**: the API (pytest against Postgres, Redis and a fake S3), the worker (including FashionCLIP embeddings and
+rembg + SAM 2 garment cutouts with the real models), the kiosk and admin (unit tests, plus real Chromium runs with a fake
+camera video: pose guidance with the real MediaPipe model, the countdown and sharpest-frame capture, progress, result,
+recommendations, QR, Request Outfit, the staff page across two screens, the phone page including a declined payment, and
+the admin sign-in, product, image-processing, CSV and analytics flows), and the CatVTON client, handler, deploy script
+and benchmark against fakes.
+
+**Not verified** (it needs hardware or accounts that were not available): the CatVTON Docker image (never built), CatVTON
+itself on a GPU (never run), the RunPod endpoint (never deployed, so no real latency or cost figures exist; the benchmark
+only prints simulated numbers with `--fake`), RunPod's exact progress and REST behaviour, the WhatsApp Cloud API (tested
+against a fake server), the payment provider (stub only), a real phone scanning the QR code, a physical webcam and
+touch screen, GPU pose guidance, and Chromium only (no other browsers). See `services/catvton/README.md` for details.
 
 ## Repo layout
 
 ```
 .
 ├── apps/
-│   ├── kiosk/          Next.js kiosk (consent, catalog, webcam mirror, live progress, outfit options, cart)
-│   └── admin/          Next.js admin (products CRUD, sessions, try-on jobs, stats)
+│   ├── kiosk/          Next.js kiosk (shop, capture, progress, result, recommendations, cart) + /staff + /m/CODE
+│   └── admin/          Next.js admin (sign-in, products, CSV import, image processing, analytics, orders, jobs)
 ├── services/
 │   ├── api/            FastAPI + SQLAlchemy + Alembic + pgvector
-│   └── worker/         RQ worker + try-on providers (mock, fashn)
+│   ├── worker/         RQ workers: try-on providers (mock, fashn, catvton), embeddings, background removal
+│   └── catvton/        CatVTON RunPod serverless image + handler + deploy script (GPU; see its README)
 ├── infra/
 │   ├── docker-compose.yml
 │   └── postgres/init.sql   (CREATE EXTENSION vector)

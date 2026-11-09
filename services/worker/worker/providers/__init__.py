@@ -1,13 +1,21 @@
 from worker.config import settings
 from worker.providers.base import ProviderError, TryOnProvider
+from worker.providers.catvton import CatVTONProvider
 from worker.providers.fashn import FashnProvider
 from worker.providers.mock import MockProvider
 
-__all__ = ["FashnProvider", "MockProvider", "ProviderError", "TryOnProvider", "get_provider"]
+__all__ = [
+    "CatVTONProvider",
+    "FashnProvider",
+    "MockProvider",
+    "ProviderError",
+    "TryOnProvider",
+    "get_provider",
+]
 
 
 def get_provider() -> TryOnProvider:
-    """Pick the provider named by TRYON_PROVIDER ('mock' or 'fashn')."""
+    """Pick the provider named by TRYON_PROVIDER ('mock', 'fashn' or 'catvton')."""
     name = settings.tryon_provider
     if name == "mock":
         return MockProvider(
@@ -17,4 +25,6 @@ def get_provider() -> TryOnProvider:
         )
     if name == "fashn":
         return FashnProvider()
-    raise ValueError(f"Unknown TRYON_PROVIDER {name!r}; expected 'mock' or 'fashn'")
+    if name == "catvton":
+        return CatVTONProvider()
+    raise ValueError(f"Unknown TRYON_PROVIDER {name!r}; expected 'mock', 'fashn' or 'catvton'")

@@ -90,6 +90,13 @@ services:
       <<: *common-env
       API_CORS_ORIGINS: http://localhost:${KIOSK_PORT:-3000},http://localhost:${ADMIN_PORT:-3001}
       ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key}
+      STAFF_API_KEY: ${STAFF_API_KEY:-dev-staff-key}
+      NOTIFIER: ${NOTIFIER:-console}
+      WHATSAPP_TOKEN: ${WHATSAPP_TOKEN:-}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_TO: ${WHATSAPP_TO:-}
+      WHATSAPP_TEMPLATE_NAME: ${WHATSAPP_TEMPLATE_NAME:-}
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-stub}
     ports:
       - "${API_PORT:-8000}:8000"
     volumes:
@@ -110,9 +117,12 @@ services:
       context: ../services/worker
     environment:
       <<: *common-env
-      # "mock" (default, offline, 8s) or "fashn" (hosted; needs FASHN_API_KEY in .env)
+      # "mock" (default, offline, 8s), "fashn" (hosted; needs FASHN_API_KEY in .env) or "catvton" (your RunPod
+      # endpoint, see services/catvton; needs RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID in .env)
       TRYON_PROVIDER: ${TRYON_PROVIDER:-mock}
       FASHN_API_KEY: ${FASHN_API_KEY:-}
+      RUNPOD_API_KEY: ${RUNPOD_API_KEY:-}
+      RUNPOD_ENDPOINT_ID: ${RUNPOD_ENDPOINT_ID:-}
       MOCK_DURATION_SECONDS: ${MOCK_DURATION_SECONDS:-8}
       MOCK_FAIL: ${MOCK_FAIL:-false}
     volumes:
@@ -152,6 +162,7 @@ services:
     environment:
       # Product and result images come back from the API as full URLs, so no media URL is needed here.
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      NEXT_PUBLIC_PUBLIC_URL: ${NEXT_PUBLIC_PUBLIC_URL:-http://localhost:3000}
       WATCHPACK_POLLING: "true"
     ports:
       - "${KIOSK_PORT:-3000}:3000"
@@ -168,8 +179,12 @@ services:
       dockerfile: apps/admin/Dockerfile
       target: dev
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
-      NEXT_PUBLIC_ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key}
+      # Server-side only: the browser never sees the admin key (it talks to the app's own /api/proxy).
+      API_URL: http://api:8000
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key}
+      NEXTAUTH_URL: http://localhost:${ADMIN_PORT:-3001}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-dev-only-change-me-dev-only-change-me}
+      ADMIN_USERS: ${ADMIN_USERS:-}
       WATCHPACK_POLLING: "true"
     ports:
       - "${ADMIN_PORT:-3001}:3000"

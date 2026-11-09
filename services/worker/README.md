@@ -44,7 +44,22 @@ any `processing` job with no update for `JOB_TIMEOUT_SECONDS` plus 60s, at start
 | `mock` (default) | Waits `MOCK_DURATION_SECONDS` (8) in `MOCK_STEPS` steps, reports progress, returns the photo with each garment pasted on and a banner. `MOCK_FAIL=true` forces a failure. |
 | `fashn` | [FASHN](https://docs.fashn.ai) `tryon-v1.6` over HTTP: `POST /v1/run`, poll `GET /v1/status/{id}`, download `output[0]`. Needs `FASHN_API_KEY` (read from the environment, never committed). Tops, bottoms and dresses only; an outfit is applied one garment at a time, each result becoming the next input. Rate limits and server errors are retried; every error is mapped to a shopper-readable message. |
 
-The worker refuses to start with an unknown provider or with `fashn` and no key.
+| `catvton` | [CatVTON](https://github.com/Zheng-Chong/CatVTON) on a RunPod serverless endpoint (`services/catvton`) over HTTPS: `POST {RUNPOD_BASE_URL}/{RUNPOD_ENDPOINT_ID}/run`, poll `/status/{id}`, cancel on timeout. Needs `RUNPOD_API_KEY` and `RUNPOD_ENDPOINT_ID`. Tops, bottoms and dresses; the whole outfit is one request and the GPU worker chains the garments. Progress is the diffusion step count the handler reports; queue wait (a cold start) shows as a slow creep to 5%. The result is a 768x1024 JPEG. `CATVTON_TIMEOUT_SECONDS` (420) must cover a cold start plus a render. |
+
+The worker refuses to start with an unknown provider, with `fashn` and no key, or with `catvton` and no key or endpoint.
+
+### Benchmark and fake RunPod
+
+`python -m worker.benchmark --jobs 10 --price-per-second <GPU rate>` runs real renders against your endpoint and prints
+average/median/p95 latency, RunPod's execution and queue times, cold starts and cost per image (it spends real money).
+`--fake` runs the same script against `worker/fake_runpod.py`, an in-process fake of the RunPod API with a simulated cold
+start, for trying the wiring for free; its numbers say nothing about the real model. See `services/catvton/README.md`.
+
+### Two workers
+
+The `tryon` queue (shoppers' looks) and the `assets` queue (FashionCLIP embeddings, rembg + SAM 2 background removal) are
+served by separate processes (`WORKER_QUEUES=tryon|assets`; the assets image is `Dockerfile.assets`) so heavy catalog
+work never delays a shopper. `python -m worker.embed_products --missing` embeds products that have none.
 
 Add a provider by subclassing `worker/providers/base.py::TryOnProvider` (`run(request, on_progress)`; raise
 `ProviderError("message safe to show")` for expected failures) and registering it in

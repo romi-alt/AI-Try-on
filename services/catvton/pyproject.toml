@@ -1,0 +1,17 @@
+# Only for the tools (ruff, pytest): the container installs requirements.txt, not this project.
+[project]
+name = "tryon-catvton"
+version = "0.1.0"
+description = "CatVTON RunPod serverless worker for the ELEVARIQ Virtual Try on Mirror"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

@@ -67,9 +67,10 @@ def process_garment(
         put_bytes(f"{base}-cutout.png", result.cutout_png, "image/png")
         put_bytes(f"{base}-mask.png", result.mask_png, "image/png")
         if reembed:
-            # The cutout changes what the picture looks like, so the embedding is recomputed from it. This happens
-            # before the product is marked done, so an admin who sees "done" also sees the new embedding. A failure
-            # here does not fail the processing: the cutout is good, and "Embed missing" can catch up later.
+            # The cutout changes what the picture looks like, so the embedding is recomputed from it. This
+            # happens before the product is marked done, so an admin who sees "done" also sees the new
+            # embedding. A failure here does not fail the processing: the cutout is good, and "Embed missing"
+            # can catch up later.
             try:
                 embed_products([product_id], encoder=encoder, load_image=lambda _url: result.cutout_png)
             except Exception:

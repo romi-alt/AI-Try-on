@@ -29,6 +29,17 @@ FastAPI backend. Owns the catalog, kiosk sessions, presigned uploads and try-on 
 | POST   | `/uploads/verify`            | admin  | Check an uploaded garment image after the PUT; deletes it and answers 413/422 if it is too big, empty or the wrong type |
 | GET    | `/tryon`                     | admin  | Recent jobs                                  |
 | GET    | `/admin/stats`               | admin  | Dashboard counters                           |
+| GET    | `/admin/analytics`           | admin  | Try-ons per product, try-on to cart rate, top recommended pairings (`days`, `limit`); definitions are in `app/api/analytics.py` |
+| POST   | `/products/import`           | admin  | Bulk create/update from a CSV body (`text/csv`); upserts on `sku`; `dry_run=true` only checks; all or nothing with a per-row report |
+| POST   | `/products/{id}/process`     | admin  | Queue background removal + garment mask (rembg + SAM 2) on the `assets` queue; progress shows in `processing_status` |
+| POST   | `/products/embeddings`       | admin  | Queue FashionCLIP embeddings for some products or the whole catalog |
+| GET    | `/recommend`                 | –      | `?product_ids=a,b`: `more_styles` (same-category nearest neighbours) and `complete_your_look` (one best match per missing top/bottom/shoes/bag) |
+| POST   | `/share`                     | –      | Make (or find) the short code for a session's mobile page, optionally with one finished look |
+| GET    | `/m/{code}`                  | code   | The mobile page's data: look image (fresh signed URL), cart, any order placed since. 404 unknown, 410 expired |
+| POST   | `/m/{code}/checkout`         | code   | Place the order and charge it through the payment provider (stub); 402 if declined (order cancelled, stock and cart restored) |
+| POST   | `/requests`                  | –      | "Request Outfit": ask staff to bring a product in a size; notifies staff (`NOTIFIER`) and publishes to the staff page |
+| GET/PATCH | `/requests`, `/requests/{id}` | staff | List open requests; mark `bringing` or `done` |
+| WS     | `/ws/staff`                  | staff  | Live request events. The first message must be `{"type":"auth","key":"<staff key>"}`; the server answers `{"type":"ready"}`, then read `GET /requests` |
 
 ## Behaviour notes
 
