@@ -17,6 +17,14 @@ class Settings(BaseSettings):
     # How long the latest state of a job (Redis hash `job:{id}`) is kept after its last update.
     job_state_ttl_seconds: int = 24 * 3600
 
+    # Error tracking and anonymous analytics (both off until a key is set); see worker/observability.py
+    sentry_dsn: str = ""
+    sentry_environment: str = "development"
+    sentry_release: str = ""
+    sentry_traces_sample_rate: float = 0.0
+    posthog_api_key: str = ""
+    posthog_host: str = "https://us.i.posthog.com"
+
     # S3-compatible storage: MinIO locally, Cloudflare R2 in production.
     s3_endpoint_url: str = "http://localhost:9000"
     # Host-visible endpoint baked into the presigned result URL (browsers can't reach `minio:9000`).

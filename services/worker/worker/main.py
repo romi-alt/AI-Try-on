@@ -9,9 +9,10 @@ import redis
 from rq import Queue, Worker
 from rq.serializers import JSONSerializer
 
-from worker import db, tasks
+from worker import analytics, db, tasks
 from worker.config import settings
 from worker.logging_setup import configure_logging
+from worker.observability import init_sentry
 from worker.providers import get_provider
 
 logger = logging.getLogger("worker")
@@ -50,6 +51,8 @@ def build_worker(queues: Queue | list[Queue], conn: redis.Redis) -> Worker:
 
 def main() -> None:
     configure_logging(settings.log_level)
+    init_sentry(service=f"worker-{settings.worker_queues}")
+    analytics.configure(settings.posthog_api_key, settings.posthog_host)
     names = queue_names()
     serves_tryon = settings.tryon_queue_name in names
 
