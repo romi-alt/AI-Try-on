@@ -86,12 +86,21 @@ The browser will ask for camera permission once the shopper agrees on the consen
 5. **Result.** The result image, with a size and colour choice per item and *Add to cart*. The cart drawer shows
    the API's totals. The camera is switched off while the result is shown.
 
-Leaving the page (Exit) ends the session and closes the live connection. There is no idle timeout yet, and the
-cart is add-only because the API has no remove endpoint.
+Leaving the page (Exit) ends the session and closes the live connection. The cart is add-only because the API
+has no remove endpoint.
 
-Configuration is in `apps/kiosk/.env.example` (`NEXT_PUBLIC_API_URL`, optional `NEXT_PUBLIC_WS_URL`). These are
-read at build time, so rebuild after changing them. Unit tests (`make test-kiosk`) cover the live-update
-follower, the store's async flow, the API client and the photo crop; they need no services.
+**Idle timeout.** After 60 seconds without input (consent, choosing, result or error screens) an "Are you still
+there?" screen covers the mirror and counts down 15 seconds. *I'm still here*, tapping the screen or pressing a
+key keeps the session. Otherwise the session ends, the camera and live connection are closed and the kiosk
+returns to the start screen, so the next shopper never sees the last one's outfit or photo. Moving the mouse,
+scrolling or touching the screen keeps an unwarned session alive but does not dismiss the warning, so a tap
+cannot also press a product underneath it. The timer is paused while the countdown, upload or render is under
+way. It uses the real clock, so a laptop that sleeps past the deadline resets as soon as it wakes.
+
+Configuration is in `apps/kiosk/.env.example` (`NEXT_PUBLIC_API_URL`, optional `NEXT_PUBLIC_WS_URL`, and
+`NEXT_PUBLIC_IDLE_WARN_SECONDS` / `NEXT_PUBLIC_IDLE_GRACE_SECONDS`; a warn time of 0 turns the timeout off).
+These are read at build time, so rebuild after changing them. Unit tests (`make test-kiosk`) cover the live-update
+follower, the store's async flow, the API client, the photo crop and the idle timer; they need no services.
 
 ## The admin app
 

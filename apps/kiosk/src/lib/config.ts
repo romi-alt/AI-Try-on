@@ -1,3 +1,10 @@
+/** A non-negative number of seconds from an environment value, or the fallback if it is missing or not a number. */
+export function parseSeconds(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
 const apiUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
 export const config = {
@@ -15,6 +22,11 @@ export const config = {
   catalogPageSize: 12,
   searchDebounceMs: 300,
   maxOutfitItems: 5, // POST /tryon accepts 1-5 products
+
+  // Idle timeout: after this long without input a "still there?" screen appears, and if nobody answers within
+  // the grace period the session ends and the kiosk returns to the start screen. 0 turns it off.
+  idleWarnSeconds: parseSeconds(process.env.NEXT_PUBLIC_IDLE_WARN_SECONDS, 60),
+  idleGraceSeconds: parseSeconds(process.env.NEXT_PUBLIC_IDLE_GRACE_SECONDS, 15),
 
   // Following a job
   pollIntervalMs: 2000, // used while the WebSocket is down

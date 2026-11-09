@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect } from "react";
 import { CartDrawer } from "@/components/CartDrawer";
 import { CatalogPanel } from "@/components/CatalogPanel";
 import { ConsentScreen } from "@/components/ConsentScreen";
+import { IdleWarning } from "@/components/IdleWarning";
 import { MirrorStage } from "@/components/MirrorStage";
 import { OutfitPanel } from "@/components/OutfitPanel";
+import { useIdleReset } from "@/hooks/useIdleReset";
 import { type Phase, useKioskStore } from "@/store/useKioskStore";
 
 const PHASE_LABEL: Partial<Record<Phase, string>> = {
@@ -24,10 +27,29 @@ export default function TryOnPage() {
   const openCart = useKioskStore((s) => s.openCart);
   const reset = useKioskStore((s) => s.reset);
 
+  const router = useRouter();
+
   // Leaving the page ends the session: closes the live connection and forgets the shopper.
   useEffect(() => () => reset(), [reset]);
 
-  if (phase === "consent" || phase === "starting") return <ConsentScreen />;
+  // A shopper who walks away: clear the screen first (so the next person never sees their look), then go back
+  // to the start screen.
+  const endAbandonedSession = useCallback(() => {
+    reset();
+    router.push("/");
+  }, [reset, router]);
+  const { secondsLeft, stay } = useIdleReset(phase, endAbandonedSession);
+
+  const warning = secondsLeft !== null && <IdleWarning secondsLeft={secondsLeft} onStay={stay} />;
+
+  if (phase === "consent" || phase === "starting") {
+    return (
+      <>
+        <ConsentScreen />
+        {warning}
+      </>
+    );
+  }
 
   // While a look is being made the outfit must not change underneath it.
   const busy = phase === "countdown" || phase === "uploading" || phase === "working" || phase === "error";
@@ -59,6 +81,7 @@ export default function TryOnPage() {
       </div>
 
       <CartDrawer />
+      {warning}
     </main>
   );
 }
