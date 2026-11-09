@@ -1,0 +1,48 @@
+[project]
+name = "tryon-api"
+version = "0.1.0"
+description = "FastAPI backend for the AI try-on mirror"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115,<0.116",
+    "uvicorn[standard]>=0.30,<0.32",
+    "pydantic>=2.9,<3",
+    "pydantic-settings>=2.5,<3",
+    "sqlalchemy>=2.0.35,<2.1",
+    "psycopg[binary]>=3.2,<3.3",
+    "alembic>=1.13,<1.14",
+    "pgvector>=0.3.5,<0.4",
+    "redis>=5.1,<6",
+    "boto3>=1.35,<1.36",
+    "python-multipart>=0.0.12",
+    "httpx>=0.27,<0.28",
+    "pillow>=10.4,<11",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*", "scripts*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# B008: `Depends(...)` in defaults is the idiomatic FastAPI dependency pattern.
+ignore = ["B008"]
+
+[tool.ruff.lint.isort]
+known-third-party = ["alembic"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
