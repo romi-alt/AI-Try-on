@@ -2,7 +2,7 @@
   "name": "ai-try-on",
   "private": true,
   "version": "0.1.0",
-  "description": "AI virtual try-on mirror monorepo",
+  "description": "ELEVARIQ Virtual Try on Mirror monorepo",
   "workspaces": [
     "apps/*"
   ],

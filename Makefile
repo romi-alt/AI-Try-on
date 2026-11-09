@@ -1,4 +1,4 @@
-# AI Try-On Mirror — developer entrypoints
+# ELEVARIQ Virtual Try on Mirror — developer entrypoints
 # Usage: make <target>   (run `make help` to list targets)
 
 SHELL := /bin/bash

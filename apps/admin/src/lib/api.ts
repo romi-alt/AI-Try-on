@@ -1,6 +1,9 @@
 import { config } from "./config";
 import type {
   AdminSession,
+  Analytics,
+  AssetJobAccepted,
+  ImportReport,
   CatalogPage,
   Category,
   Job,
@@ -44,12 +47,10 @@ export function messageFromDetail(detail: unknown, fallback: string): string {
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const UPLOAD_TIMEOUT_MS = 60_000;
-const UNAUTHORIZED =
-  "The API rejected the admin key. Check that NEXT_PUBLIC_ADMIN_API_KEY matches ADMIN_API_KEY on the API.";
+const SIGNED_OUT = "Your session has ended. Sign in again.";
 
 async function request<T>(path: string, init: RequestInit = {}, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
   const headers = new Headers(init.headers);
-  headers.set("X-Admin-Key", config.adminKey);
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
 
   let res: Response;
@@ -64,11 +65,15 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = DEFA
     if (e instanceof DOMException && e.name === "TimeoutError") {
       throw new ApiError(0, "The API took too long to answer.");
     }
-    throw new ApiError(0, `Can't reach the API at ${config.apiUrl}.`);
+    throw new ApiError(0, "Can't reach the admin server.");
   }
 
   if (!res.ok) {
-    if (res.status === 401) throw new ApiError(401, UNAUTHORIZED);
+    if (res.status === 401) {
+      // The proxy answers 401 only when the NextAuth session has expired.
+      if (typeof window !== "undefined") window.location.href = "/login";
+      throw new ApiError(401, SIGNED_OUT);
+    }
     let detail: unknown;
     try {
       detail = ((await res.json()) as { detail?: unknown }).detail;
@@ -172,6 +177,26 @@ export const api = {
    */
   setOrderStatus: (id: string, status: "collected" | "cancelled") =>
     request<Order>(`/orders/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
+
+  /**
+   * Queue background removal and a garment mask for a product's image (and a fresh embedding unless `reembed` is
+   * false). Progress shows in the product's `processing_status`. A product already being processed is a 409.
+   */
+  processProduct: (id: string, reembed = true) =>
+    request<AssetJobAccepted>(`/products/${id}/process?reembed=${reembed}`, { method: "POST" }),
+
+  /** Queue FashionCLIP embeddings for some products, or (no ids) the whole catalog. */
+  regenerateEmbeddings: ({ productIds, onlyMissing = false }: { productIds?: string[]; onlyMissing?: boolean } = {}) =>
+    request<AssetJobAccepted>("/products/embeddings", {
+      method: "POST",
+      body: JSON.stringify({ product_ids: productIds ?? null, only_missing: onlyMissing }),
+    }),
+
+  /** Bulk create/update from CSV text. `dryRun` checks the file and saves nothing. All or nothing. */
+  importProducts: (csv: Blob | string, { dryRun }: { dryRun: boolean }) =>
+    request<ImportReport>(`/products/import?dry_run=${dryRun}`, { method: "POST", body: csv, headers: { "Content-Type": "text/csv" } }, UPLOAD_TIMEOUT_MS),
+
+  analytics: (days: number, limit = 10) => request<Analytics>(`/admin/analytics?days=${days}&limit=${limit}`),
 
   listSessions: (limit: number = config.listLimit) => request<AdminSession[]>(`/sessions?limit=${limit}`),
 

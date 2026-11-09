@@ -174,6 +174,14 @@ export function ProductForm({ product, onClose, onSaved }: Props) {
           </div>
 
           <div>
+            <label htmlFor="pf-sku" className={label}>
+              SKU <span className="font-normal text-neutral-500">(optional; used to update products from a CSV)</span>
+            </label>
+            <input id="pf-sku" className={input} value={values.sku} onChange={(e) => set("sku", e.target.value)} />
+            <FieldError>{errors.sku}</FieldError>
+          </div>
+
+          <div>
             <label htmlFor="pf-category" className={label}>
               Category
             </label>

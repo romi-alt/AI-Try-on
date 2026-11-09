@@ -1,7 +1,7 @@
 [project]
 name = "tryon-api"
 version = "0.1.0"
-description = "FastAPI backend for the AI try-on mirror"
+description = "FastAPI backend for the ELEVARIQ Virtual Try on Mirror"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115,<0.116",

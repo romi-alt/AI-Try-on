@@ -1,6 +1,6 @@
-# AI Try-On Mirror
+# ELEVARIQ Virtual Try on Mirror
 
-An AI virtual try-on mirror. A laptop webcam acts as the mirror: the shopper picks a
+The ELEVARIQ Virtual Try on Mirror: an AI virtual try-on mirror. A laptop webcam acts as the mirror: the shopper picks a
 outfit, the kiosk captures a frame, and a worker renders the items onto them.
 
 ```

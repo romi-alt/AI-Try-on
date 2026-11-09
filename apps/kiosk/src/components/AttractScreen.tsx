@@ -16,7 +16,7 @@ export function AttractScreen() {
         <span className="glass flex h-40 w-40 items-center justify-center rounded-full text-accent">
           <MirrorIcon className="h-20 w-20" />
         </span>
-        <p className="text-2xl uppercase tracking-[0.5em] text-accent">AI Try-On Mirror</p>
+        <p className="text-2xl uppercase tracking-[0.5em] text-accent">ELEVARIQ Virtual Try on Mirror</p>
         <h1 className="text-8xl font-semibold leading-[1.05]">
           See it on you.
           <br />

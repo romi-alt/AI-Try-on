@@ -8,10 +8,12 @@
     "start": "next start -p 3001",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "hash-password": "node scripts/hash-password.mjs"
   },
   "dependencies": {
     "next": "14.2.15",
+    "next-auth": "^4.24.11",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "zustand": "4.5.5"

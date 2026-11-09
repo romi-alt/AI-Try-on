@@ -1,41 +1,17 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { AdminKeyBanner } from "@/components/AdminKeyBanner";
+import { Shell } from "@/components/Shell";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Try-On Admin",
-  description: "Catalog, orders, sessions and try-on jobs for the AI try-on mirror",
+  title: "ELEVARIQ Admin",
+  description: "Catalog, orders, sessions and try-on jobs for the ELEVARIQ Virtual Try on Mirror",
 };
-
-const nav = [
-  { href: "/", label: "Overview" },
-  { href: "/products", label: "Products" },
-  { href: "/orders", label: "Orders" },
-  { href: "/sessions", label: "Sessions" },
-  { href: "/jobs", label: "Try-on jobs" },
-];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body className="min-h-screen">
-        <div className="flex min-h-screen">
-          <aside className="w-56 flex-none border-r border-neutral-200 bg-white p-5">
-            <p className="mb-6 text-sm font-semibold tracking-wide text-neutral-500">TRY-ON ADMIN</p>
-            <nav className="flex flex-col gap-1">
-              {nav.map((n) => (
-                <Link key={n.href} href={n.href} className="rounded-md px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-100">
-                  {n.label}
-                </Link>
-              ))}
-            </nav>
-          </aside>
-          <main className="min-w-0 flex-1 p-8">
-            <AdminKeyBanner />
-            {children}
-          </main>
-        </div>
+        <Shell>{children}</Shell>
       </body>
     </html>
   );

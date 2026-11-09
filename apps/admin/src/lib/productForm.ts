@@ -5,6 +5,7 @@ export const SHOE_SIZES = ["36", "37", "38", "39", "40", "41"];
 export const ONE_SIZE = ["One Size"];
 
 export const MAX_NAME = 200;
+export const MAX_SKU = 64;
 export const MAX_SIZE_LEN = 20; // the cart stores sizes in a 20 character column
 export const MAX_COLOR_LEN = 40;
 export const MAX_SIZES = 20;
@@ -21,6 +22,7 @@ export function defaultSizes(category: Category): string[] {
 
 /** Text fields hold what was typed; `toProductInput` turns them into numbers once validated. */
 export type ProductFormValues = {
+  sku: string;
   name: string;
   category: Category;
   price: string;
@@ -31,6 +33,7 @@ export type ProductFormValues = {
 };
 
 export const emptyForm = (): ProductFormValues => ({
+  sku: "",
   name: "",
   category: "top",
   price: "",
@@ -41,6 +44,7 @@ export const emptyForm = (): ProductFormValues => ({
 });
 
 export const formFromProduct = (p: Product): ProductFormValues => ({
+  sku: p.sku ?? "",
   name: p.name,
   category: p.category,
   price: String(p.price_pkr),
@@ -72,10 +76,12 @@ export function addSizes(existing: string[], text: string): { sizes: string[]; e
   return { sizes, error: null };
 }
 
-export type FormErrors = Partial<Record<"name" | "price" | "salePrice" | "stock" | "sizes" | "colors" | "image", string>>;
+export type FormErrors = Partial<Record<"sku" | "name" | "price" | "salePrice" | "stock" | "sizes" | "colors" | "image", string>>;
 
 export function validateForm(v: ProductFormValues, opts: { hasImage: boolean }): FormErrors {
   const errors: FormErrors = {};
+
+  if (v.sku.trim().length > MAX_SKU) errors.sku = `Keep the SKU under ${MAX_SKU} characters.`;
 
   const name = v.name.trim();
   if (!name) errors.name = "Enter a name.";
@@ -119,6 +125,7 @@ export function toProductInput(
   urls: { image: string; mask: string | null },
 ): ProductInput {
   return {
+    sku: v.sku.trim() === "" ? null : v.sku.trim(),
     name: v.name.trim(),
     category: v.category,
     price_pkr: parseWholeNumber(v.price) ?? 0,

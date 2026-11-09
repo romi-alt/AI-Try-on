@@ -15,8 +15,11 @@ export const categoryLabel = (c: Category) => CATEGORIES.find((x) => x.value ===
 
 export type ColorOption = { name: string; hex: string };
 
+export type ProcessingStatus = "idle" | "queued" | "processing" | "done" | "failed";
+
 export type Product = {
   id: string;
+  sku: string | null;
   name: string;
   category: Category;
   price_pkr: number;
@@ -26,6 +29,11 @@ export type Product = {
   stock: number;
   garment_image_url: string;
   garment_mask_url: string | null;
+  garment_original_url: string | null;
+  has_embedding: boolean;
+  embedding_updated_at: string | null;
+  processing_status: ProcessingStatus;
+  processing_error: string | null;
   created_at: string;
   on_sale: boolean;
   current_price_pkr: number;
@@ -33,6 +41,7 @@ export type Product = {
 
 /** The writable fields of a product (POST /products). */
 export type ProductInput = {
+  sku: string | null;
   name: string;
   category: Category;
   price_pkr: number;
@@ -96,4 +105,39 @@ export type Order = {
   created_at: string;
   status_changed_at: string | null;
   items: OrderItem[];
+};
+
+/** `POST /products/{id}/process` and `POST /products/embeddings`. */
+export type AssetJobAccepted = { job_id: string; products: number };
+
+/** `POST /products/import` */
+export type ImportRow = { line: number; action: "create" | "update" | "error"; sku: string | null; name: string | null; errors: string[] };
+export type ImportReport = {
+  dry_run: boolean;
+  applied: boolean;
+  created: number;
+  updated: number;
+  error_count: number;
+  rows: ImportRow[];
+  embedding_job_id: string | null;
+};
+
+/** `GET /admin/analytics` */
+export type ProductTryOnStats = { product_id: string; name: string; category: string | null; tryons: number; added_to_cart: number; cart_rate: number | null };
+export type PairingStats = {
+  base_product_id: string;
+  base_name: string;
+  recommended_product_id: string;
+  recommended_name: string;
+  tryons: number;
+  added_to_cart: number;
+};
+export type Analytics = {
+  days: number;
+  since: string;
+  tryons: number;
+  tryons_with_cart: number;
+  cart_rate: number | null;
+  products: ProductTryOnStats[];
+  pairings: PairingStats[];
 };

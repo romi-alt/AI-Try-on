@@ -1,6 +1,7 @@
 "use client";
 
 /* eslint-disable @next/next/no-img-element */
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Banner } from "@/components/Banner";
 import { Pagination } from "@/components/Pagination";
@@ -9,6 +10,7 @@ import { StockCell } from "@/components/StockCell";
 import { api, ApiError } from "@/lib/api";
 import { config } from "@/lib/config";
 import { formatPkr } from "@/lib/money";
+import { isBusy, PROCESSING_LABEL, PROCESSING_STYLE } from "@/lib/processing";
 import { CATEGORIES, categoryLabel, type CatalogPage, type Category, type Product } from "@/lib/types";
 
 const filterInput = "rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm";
@@ -56,6 +58,34 @@ export default function ProductsPage() {
 
   const reload = useCallback(() => setReloads((n) => n + 1), []);
 
+  // While any product on screen is being processed, look again every few seconds so its status updates.
+  const anyBusy = (data?.items ?? []).some(isBusy);
+  useEffect(() => {
+    if (!anyBusy) return;
+    const t = setInterval(reload, config.processingPollMs);
+    return () => clearInterval(t);
+  }, [anyBusy, reload]);
+
+  async function process(p: Product) {
+    try {
+      await api.processProduct(p.id);
+      setNotice({ kind: "success", text: `Removing the background of “${p.name}”. This takes a minute.` });
+      reload();
+    } catch (e) {
+      setNotice({ kind: "error", text: e instanceof ApiError ? e.message : "Couldn't start processing." });
+    }
+  }
+
+  async function embed(opts: { productIds?: string[]; onlyMissing?: boolean }, what: string) {
+    try {
+      await api.regenerateEmbeddings(opts);
+      setNotice({ kind: "success", text: `Updating the embeddings for ${what}. Recommendations use the new ones as they finish.` });
+      reload();
+    } catch (e) {
+      setNotice({ kind: "error", text: e instanceof ApiError ? e.message : "Couldn't start the embedding job." });
+    }
+  }
+
   async function remove(p: Product) {
     if (!confirm(`Delete “${p.name}”? This can't be undone.`)) return;
     try {
@@ -80,9 +110,24 @@ export default function ProductsPage() {
     <div>
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Products</h1>
-        <button type="button" onClick={() => setEditing({ product: null })} className="rounded-md bg-neutral-900 px-4 py-2 text-sm text-white hover:bg-neutral-700">
-          Add product
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => void embed({ onlyMissing: true }, "products that have none")} className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm hover:bg-neutral-100">
+            Embed missing
+          </button>
+          <button
+            type="button"
+            onClick={() => confirm("Recompute the embedding of every product? This can take a few minutes.") && void embed({}, "every product")}
+            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm hover:bg-neutral-100"
+          >
+            Re-embed all
+          </button>
+          <Link href="/products/import" className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm hover:bg-neutral-100">
+            Import CSV
+          </Link>
+          <button type="button" onClick={() => setEditing({ product: null })} className="rounded-md bg-neutral-900 px-4 py-2 text-sm text-white hover:bg-neutral-700">
+            Add product
+          </button>
+        </div>
       </div>
 
       {notice && (
@@ -134,6 +179,7 @@ export default function ProductsPage() {
               <th className="p-3">Price</th>
               <th className="p-3 text-right">Stock</th>
               <th className="p-3">Options</th>
+              <th className="p-3">Image processing</th>
               <th className="p-3" />
             </tr>
           </thead>
@@ -172,7 +218,24 @@ export default function ProductsPage() {
                     ))}
                   </div>
                 </td>
+                <td className="p-3">
+                  <span
+                    title={p.processing_error ?? undefined}
+                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${PROCESSING_STYLE[p.processing_status]}`}
+                    data-testid="processing-status"
+                  >
+                    {PROCESSING_LABEL[p.processing_status]}
+                  </span>
+                  {p.processing_status === "failed" && p.processing_error && <div className="mt-1 max-w-[14rem] text-xs text-red-700">{p.processing_error}</div>}
+                  <div className="mt-1 text-xs text-neutral-500">{p.has_embedding ? "Embedded" : "No embedding"}</div>
+                </td>
                 <td className="p-3 text-right">
+                  <button type="button" disabled={isBusy(p)} onClick={() => void process(p)} className="mr-3 text-xs text-neutral-700 hover:underline disabled:cursor-not-allowed disabled:opacity-40">
+                    {p.processing_status === "done" ? "Reprocess image" : "Remove background"}
+                  </button>
+                  <button type="button" onClick={() => void embed({ productIds: [p.id] }, `“${p.name}”`)} className="mr-3 text-xs text-neutral-700 hover:underline">
+                    Re-embed
+                  </button>
                   <button type="button" onClick={() => setEditing({ product: p })} className="mr-3 text-xs text-neutral-700 hover:underline">
                     Edit
                   </button>
@@ -184,7 +247,7 @@ export default function ProductsPage() {
             ))}
             {!loading && !error && rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="p-8 text-center text-neutral-500">
+                <td colSpan={7} className="p-8 text-center text-neutral-500">
                   {category !== "all" || onSale || search ? "No products match those filters." : <>No products yet. Add one, or run <code>make seed</code>.</>}
                 </td>
               </tr>

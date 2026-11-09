@@ -53,9 +53,9 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     lifespan=lifespan,
-    title="AI Try-On API",
+    title="ELEVARIQ Virtual Try on Mirror API",
     version="0.1.0",
-    description="Backend for the virtual try-on mirror: catalog, sessions, carts and try-on jobs.",
+    description="Backend for the ELEVARIQ Virtual Try on Mirror: catalog, sessions, carts and try-on jobs.",
 )
 
 # Innermost of the three, so an over-size 413 still gets CORS headers and a request-log line.

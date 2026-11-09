@@ -89,6 +89,23 @@ def test_the_embedding_is_recomputed_from_the_cutout(pg, s3):
     assert vec is not None and at is not None  # a product with no embedding now has one
 
 
+def test_the_product_is_only_done_once_its_embedding_is_stored(pg, s3):
+    """An admin who sees "done" must also see the new embedding (the page stops refreshing at "done")."""
+    pid = queued()
+    seen = {}
+
+    class Spy(ColourEncoder):
+        def encode(self, images):
+            seen["status_while_embedding"] = row(pid).processing_status
+            return super().encode(images)
+
+    process_garment(pid, remover=Remover(), encoder=Spy())
+
+    assert seen["status_while_embedding"] == "processing"
+    assert row(pid).processing_status == "done"
+    assert stored(pid)[0] is not None
+
+
 def test_reprocessing_starts_from_the_original_and_uses_fresh_keys(pg, s3):
     pid = queued(color=(10, 200, 10))
     edge_only = np.zeros((100, 100), bool)

@@ -30,25 +30,26 @@ describe("messageFromDetail", () => {
 });
 
 describe("requests", () => {
-  it("sends the admin key on every request", async () => {
+  it("goes through the admin app's own proxy and never carries the admin key", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({}));
     await api.stats();
-    expect(new Headers(fetch.mock.calls[0][1]?.headers).get("X-Admin-Key")).toBe(config.adminKey);
+    expect(String(fetch.mock.calls[0][0])).toBe("/api/proxy/admin/stats");
+    expect(new Headers(fetch.mock.calls[0][1]?.headers).has("X-Admin-Key")).toBe(false);
   });
 
   it("lists products from the catalog, leaving defaults out", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ items: [] }));
     await api.listProducts({ category: "all", page: 1, pageSize: 20 });
     await api.listProducts({ category: "shoes", search: " heel ", onSale: true, page: 3, pageSize: 20 });
-    const q = (i: number) => Object.fromEntries(new URL(String(fetch.mock.calls[i][0])).searchParams);
-    expect(new URL(String(fetch.mock.calls[0][0])).pathname).toBe("/catalog");
+    const q = (i: number) => Object.fromEntries(new URL(String(fetch.mock.calls[i][0]), "http://admin.test").searchParams);
+    expect(new URL(String(fetch.mock.calls[0][0]), "http://admin.test").pathname).toBe("/api/proxy/catalog");
     expect(q(0)).toEqual({ page: "1", page_size: "20" });
     expect(q(1)).toEqual({ page: "3", page_size: "20", category: "shoes", on_sale: "true", search: "heel" });
   });
 
   it("creates a product with a JSON body", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ id: "p1" }, 201));
-    const input: ProductInput = { name: "A", category: "top", price_pkr: 1, sale_price_pkr: null, sizes: [], colors: [], stock: 0, garment_image_url: "u", garment_mask_url: null };
+    const input: ProductInput = { sku: null, name: "A", category: "top", price_pkr: 1, sale_price_pkr: null, sizes: [], colors: [], stock: 0, garment_image_url: "u", garment_mask_url: null };
     await api.createProduct({ ...input });
     const [url, init] = fetch.mock.calls[0];
     expect(String(url)).toMatch(/\/products$/);
@@ -91,12 +92,12 @@ describe("requests", () => {
 });
 
 describe("errors", () => {
-  it("explains a rejected admin key and how to fix it", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ detail: "Invalid admin key" }, 401));
+  it("tells a signed-out admin to sign in again", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ detail: "Sign in to continue" }, 401));
     const err = await api.stats().catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(401);
-    expect(err.message).toMatch(/NEXT_PUBLIC_ADMIN_API_KEY/);
+    expect(err.message).toMatch(/Sign in again/);
   });
 
   it("passes the API's own reason through", async () => {
@@ -113,7 +114,7 @@ describe("errors", () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
     const err = await api.stats().catch((e) => e);
     expect(err.status).toBe(0);
-    expect(err.message).toContain(config.apiUrl);
+    expect(err.message).toMatch(/admin server/);
   });
 
   it("explains a timeout", async () => {
@@ -155,7 +156,7 @@ describe("uploadImage", () => {
     expect(String(verifyUrl)).toMatch(/\/uploads\/verify$/);
     expect(verifyInit?.method).toBe("POST");
     expect(JSON.parse(String(verifyInit?.body))).toEqual({ key: presign.key });
-    expect(new Headers(verifyInit?.headers).has("X-Admin-Key")).toBe(true); // this one goes to the API
+    expect(new Headers(verifyInit?.headers).has("X-Admin-Key")).toBe(false); // the proxy adds it, server side
   });
 
   it("shows the API's reason when the check refuses the file, so the product is not saved with it", async () => {
@@ -192,13 +193,13 @@ describe("uploadImage", () => {
 describe("listOrders", () => {
   const order = { id: "o1", session_id: null, pickup_code: "K7TQ4M", status: "placed", status_changed_at: null, item_count: 1, subtotal_pkr: 500, created_at: "2026-01-01T00:00:00Z", items: [] };
 
-  it("asks for the latest orders with the admin key", async () => {
+  it("asks for the latest orders", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json([order]));
     const res = await api.listOrders();
     expect(res).toEqual([order]);
     const [url, init] = fetch.mock.calls[0];
     expect(String(url)).toMatch(/\/orders\?limit=\d+$/);
-    expect(new Headers(init?.headers).has("X-Admin-Key")).toBe(true);
+    expect(new Headers(init?.headers).has("X-Admin-Key")).toBe(false);
   });
 
   it("sends a trimmed pickup code, and none when it is blank", async () => {
@@ -209,7 +210,7 @@ describe("listOrders", () => {
     expect(String(fetch.mock.calls[1][0])).not.toContain("code=");
   });
 
-  it("says how to fix a missing admin key", async () => {
+  it("treats a 401 from the proxy as a signed-out session", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ detail: "Invalid admin key" }, 401));
     await expect(api.listOrders()).rejects.toMatchObject({ status: 401 });
   });
@@ -224,7 +225,7 @@ describe("listOrders", () => {
 });
 
 describe("setOrderStatus", () => {
-  it("PATCHes the order with the admin key", async () => {
+  it("PATCHes the order", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ id: "o1", status: "cancelled" }));
     const res = await api.setOrderStatus("o1", "cancelled");
     expect(res).toMatchObject({ status: "cancelled" });
@@ -232,7 +233,7 @@ describe("setOrderStatus", () => {
     expect(String(url)).toMatch(/\/orders\/o1$/);
     expect(init?.method).toBe("PATCH");
     expect(JSON.parse(String(init?.body))).toEqual({ status: "cancelled" });
-    expect(new Headers(init?.headers).has("X-Admin-Key")).toBe(true);
+    expect(new Headers(init?.headers).has("X-Admin-Key")).toBe(false);
   });
 
   it("shows the API's reason when the order is already closed the other way", async () => {

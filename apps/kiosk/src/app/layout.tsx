@@ -3,8 +3,8 @@ import { Providers } from "@/components/Providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Try-On Mirror",
-  description: "AI virtual try-on mirror kiosk",
+  title: "ELEVARIQ Virtual Try on Mirror",
+  description: "ELEVARIQ Virtual Try on Mirror kiosk",
 };
 
 export const viewport: Viewport = {

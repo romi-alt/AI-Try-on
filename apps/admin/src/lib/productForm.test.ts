@@ -23,6 +23,7 @@ const valid = (over: Partial<ProductFormValues> = {}): ProductFormValues => ({
 
 const stored: Product = {
   id: "p1",
+  sku: "LCS-01",
   name: "Linen Camp Shirt",
   category: "top",
   price_pkr: 3990,
@@ -32,6 +33,11 @@ const stored: Product = {
   stock: 12,
   garment_image_url: "http://img/a.png",
   garment_mask_url: null,
+  garment_original_url: null,
+  has_embedding: false,
+  embedding_updated_at: null,
+  processing_status: "idle",
+  processing_error: null,
   created_at: "2026-01-01T00:00:00Z",
   on_sale: false,
   current_price_pkr: 3990,
@@ -141,6 +147,11 @@ describe("validateForm", () => {
     expect(validateForm(valid(), { hasImage: false }).image).toBeDefined();
   });
 
+  it("limits the SKU to 64 characters", () => {
+    expect(validateForm(valid({ sku: "x".repeat(65) }), { hasImage: true }).sku).toMatch(/64/);
+    expect(validateForm(valid({ sku: "x".repeat(64) }), { hasImage: true }).sku).toBeUndefined();
+  });
+
   it("reports every problem at once", () => {
     const e = validateForm(valid({ name: "", price: "", stock: "-1" }), { hasImage: false });
     expect(Object.keys(e).sort()).toEqual(["image", "name", "price", "stock"]);
@@ -154,6 +165,7 @@ describe("toProductInput", () => {
       { image: "http://img/a.png", mask: "http://img/a-mask.png" },
     );
     expect(input).toEqual({
+      sku: null,
       name: "Linen Camp Shirt",
       category: "top",
       price_pkr: 3990,
@@ -164,6 +176,12 @@ describe("toProductInput", () => {
       garment_image_url: "http://img/a.png",
       garment_mask_url: "http://img/a-mask.png",
     });
+  });
+
+  it("trims the SKU, and sends null when it is blank", () => {
+    const urls = { image: "u", mask: null };
+    expect(toProductInput(valid({ sku: "  LCS-01 " }), urls).sku).toBe("LCS-01");
+    expect(toProductInput(valid({ sku: "   " }), urls).sku).toBeNull();
   });
 
   it("sends null for no sale price and no mask", () => {
@@ -202,6 +220,12 @@ describe("editing", () => {
     const form = { ...formFromProduct(stored), sizes: ["S", "L"], colors: [{ name: "Sand", hex: "#000000" }] };
     const patch = changedFields(stored, toProductInput(form, { image: stored.garment_image_url, mask: null }));
     expect(Object.keys(patch).sort()).toEqual(["colors", "sizes"]);
+  });
+
+  it("clears a SKU the admin emptied, and leaves it alone otherwise", () => {
+    const cleared = changedFields(stored, toProductInput({ ...formFromProduct(stored), sku: "" }, { image: stored.garment_image_url, mask: null }));
+    expect(cleared).toEqual({ sku: null });
+    expect(changedFields(stored, toProductInput(formFromProduct(stored), { image: stored.garment_image_url, mask: null }))).toEqual({});
   });
 
   it("copies colours so editing the form cannot alter the stored product", () => {
