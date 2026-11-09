@@ -85,6 +85,11 @@ The browser will ask for camera permission once the shopper agrees on the consen
    down, so a look still finishes if WebSockets are blocked. Failures show the worker's readable message.
 5. **Result.** The result image, with a size and colour choice per item and *Add to cart*. The cart drawer shows
    the API's totals. The camera is switched off while the result is shown.
+6. **Checkout.** *Place order* in the cart drawer creates an order for everything in the cart and shows a six-character
+   pickup code, the items and the total. **There is no online payment: the shopper pays at the counter** and shows the
+   code. The items are taken out of stock at that moment; if some ran out meanwhile the shopper is told which and
+   nothing is ordered. If the answer is lost on the way back, trying again returns the same order rather than a second
+   one. *Done* ends the session, *Keep shopping* goes back to the cart.
 
 Leaving the page (Exit) ends the session and closes the live connection. In the cart drawer each line has a
 minus and plus to change its quantity (plus stops at the product's stock, counted across all its sizes and
@@ -117,6 +122,9 @@ follower, the store's async flow, the API client, the photo crop and the idle ti
   `services/api/README.md`). **The bucket must allow CORS PUT from the admin origin** (MinIO does by
   default; for Cloudflare R2 add a CORS rule). Deleting a product that is in a cart is refused by the API, and the
   page suggests setting its stock to 0 instead.
+- **Orders.** The latest orders with their pickup code, items and total, newest first, and a box to find one by its
+  code (case does not matter). Prices are as they were when the order was placed. It is read-only: orders have no
+  status yet, so nothing can be marked collected or cancelled.
 - **Sessions.** The latest sessions with their try-on counts.
 - **Try-on jobs.** The latest jobs, refreshed every few seconds, with product names, progress, duration, the
   worker's error for failed ones and, for finished ones, a link to the result. Result links are signed and expire,

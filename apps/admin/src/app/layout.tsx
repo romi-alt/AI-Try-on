@@ -5,12 +5,13 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Try-On Admin",
-  description: "Catalog, sessions and try-on jobs for the AI try-on mirror",
+  description: "Catalog, orders, sessions and try-on jobs for the AI try-on mirror",
 };
 
 const nav = [
   { href: "/", label: "Overview" },
   { href: "/products", label: "Products" },
+  { href: "/orders", label: "Orders" },
   { href: "/sessions", label: "Sessions" },
   { href: "/jobs", label: "Try-on jobs" },
 ];

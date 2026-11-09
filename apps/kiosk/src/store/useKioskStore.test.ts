@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
     getCart: vi.fn(),
     removeFromCart: vi.fn(),
     setCartQuantity: vi.fn(),
+    checkout: vi.fn(),
   },
   events: { track: vi.fn(), close: vi.fn() },
   createSessionEvents: vi.fn(),
@@ -682,5 +683,139 @@ describe("changing a cart quantity", () => {
 
     expect(mocks.api.setCartQuantity).toHaveBeenCalledTimes(1);
     expect(store().cart).toEqual(cartOf(3)); // the later change is the last word
+  });
+});
+
+describe("checking out", () => {
+  const order = { id: "o1", session_id: "sess-1", pickup_code: "K7TQ4M", item_count: 2, subtotal_pkr: 1000, created_at: "2026-01-01T00:00:00Z", items: [] };
+  const fullCart = { session_id: "sess-1", cart_id: "c1", items: [{ id: "l1", product: { stock: 5 }, size: null, color: null, quantity: 2, unit_price_pkr: 500, line_total_pkr: 1000 }], item_count: 2, subtotal_pkr: 1000 };
+  const emptyCart = { session_id: "sess-1", cart_id: "c1", items: [], item_count: 0, subtotal_pkr: 0 };
+  const keyOf = (call: number) => mocks.api.checkout.mock.calls[call][1] as string;
+  beforeEach(async () => {
+    await openSession();
+    useKioskStore.setState({ cart: fullCart as never });
+  });
+
+  it("places the order, shows it and empties the cart on screen", async () => {
+    mocks.api.checkout.mockResolvedValue(order);
+
+    const result = await store().placeOrder();
+
+    expect(result).toEqual({ ok: true });
+    expect(mocks.api.checkout).toHaveBeenCalledWith("sess-1", expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/));
+    expect(store().order).toEqual(order);
+    expect(store().cart).toEqual(emptyCart);
+  });
+
+  it("resends the same key after a failure that leaves the outcome unknown, so a lost answer cannot double-order", async () => {
+    mocks.api.checkout.mockRejectedValueOnce(new ApiError(0, "Can't reach the mirror's server."));
+    mocks.api.checkout.mockRejectedValueOnce(new ApiError(503, "Service Unavailable"));
+    mocks.api.checkout.mockResolvedValueOnce(order);
+
+    expect((await store().placeOrder()).ok).toBe(false);
+    expect((await store().placeOrder()).ok).toBe(false);
+    expect((await store().placeOrder()).ok).toBe(true);
+
+    expect(keyOf(1)).toBe(keyOf(0));
+    expect(keyOf(2)).toBe(keyOf(0));
+    expect(store().cart).toEqual(emptyCart);
+  });
+
+  it("uses a new key for the next checkout once one has succeeded", async () => {
+    mocks.api.checkout.mockResolvedValue(order);
+    await store().placeOrder();
+    useKioskStore.setState({ cart: fullCart as never, order: null });
+    await store().placeOrder();
+    expect(keyOf(1)).not.toBe(keyOf(0));
+  });
+
+  it("drops the key when the API refuses, and shows the real cart if stock is short", async () => {
+    mocks.api.checkout.mockRejectedValue(new ApiError(409, "Not enough stock. Linen Shirt: only 1 left"));
+    mocks.api.getCart.mockResolvedValue({ ...fullCart, items: [{ ...fullCart.items[0], product: { stock: 1 } }] });
+
+    const result = await store().placeOrder();
+    await store().placeOrder();
+
+    expect(result).toEqual({ ok: false, message: "Not enough stock. Linen Shirt: only 1 left" });
+    expect(mocks.api.getCart).toHaveBeenCalledWith("sess-1");
+    expect(store().order).toBeNull();
+    expect(keyOf(1)).not.toBe(keyOf(0)); // a refusal is an answer: the next attempt is a new checkout
+  });
+
+  it("still reports a refusal when refreshing the cart fails too", async () => {
+    mocks.api.checkout.mockRejectedValue(new ApiError(409, "Your cart is empty"));
+    mocks.api.getCart.mockRejectedValue(new ApiError(0, "offline"));
+    expect(await store().placeOrder()).toEqual({ ok: false, message: "Your cart is empty" });
+  });
+
+  it("does not reuse a key once the cart has changed", async () => {
+    mocks.api.checkout.mockRejectedValueOnce(new ApiError(0, "offline")); // outcome unknown
+    mocks.api.setCartQuantity.mockResolvedValue({ ...fullCart, item_count: 3 });
+    mocks.api.checkout.mockResolvedValueOnce(order);
+
+    await store().placeOrder();
+    await store().setCartQuantity("l1", 3); // the shopper edits the cart before retrying
+    await store().placeOrder();
+
+    expect(keyOf(1)).not.toBe(keyOf(0));
+  });
+
+  it("does not reuse a key after an item is added either", async () => {
+    mocks.api.checkout.mockRejectedValueOnce(new ApiError(0, "offline"));
+    mocks.api.addToCart.mockResolvedValue(fullCart);
+    mocks.api.checkout.mockResolvedValueOnce(order);
+
+    await store().placeOrder();
+    await store().addToCart(product("a"), "M", null);
+    await store().placeOrder();
+
+    expect(keyOf(1)).not.toBe(keyOf(0));
+  });
+
+  it("does not show an order to the next shopper if the session ended while it was being placed", async () => {
+    let finish!: (o: unknown) => void;
+    mocks.api.checkout.mockReturnValue(new Promise((r) => (finish = r)));
+    const pending = store().placeOrder();
+    await flush();
+
+    store().reset(); // idle timeout
+    finish(order);
+    await pending;
+
+    expect(store().order).toBeNull();
+    expect(store().cart).toBeNull();
+  });
+
+  it("does nothing without a session", async () => {
+    store().reset();
+    expect((await store().placeOrder()).ok).toBe(false);
+    expect(mocks.api.checkout).not.toHaveBeenCalled();
+  });
+
+  it("goes in line behind a cart change that is still in flight", async () => {
+    let finish!: (c: unknown) => void;
+    mocks.api.setCartQuantity.mockReturnValue(new Promise((r) => (finish = r)));
+    mocks.api.checkout.mockResolvedValue(order);
+
+    const change = store().setCartQuantity("l1", 3);
+    const placed = store().placeOrder();
+    await flush();
+    expect(mocks.api.checkout).not.toHaveBeenCalled(); // must not order the cart as it was before the change
+
+    finish({ ...fullCart, item_count: 3 });
+    await Promise.all([change, placed]);
+    expect(mocks.api.checkout).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the order when dismissed and when the session ends", async () => {
+    mocks.api.checkout.mockResolvedValue(order);
+    await store().placeOrder();
+    store().dismissOrder();
+    expect(store().order).toBeNull();
+
+    await openSession();
+    useKioskStore.setState({ order: order as never });
+    store().reset();
+    expect(store().order).toBeNull();
   });
 });

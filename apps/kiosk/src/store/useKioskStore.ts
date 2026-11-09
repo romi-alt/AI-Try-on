@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { api, ApiError } from "@/lib/api";
 import { config } from "@/lib/config";
 import { createSessionEvents, type SessionEvents } from "@/lib/sessionEvents";
-import type { Cart, Category, JobUpdate, Product, Session } from "@/lib/types";
+import type { Cart, Category, JobUpdate, Order, Product, Session } from "@/lib/types";
 
 export type Phase =
   | "consent" // waiting for the shopper to agree; no session yet, camera off
@@ -48,6 +48,8 @@ type State = {
   resultUrl: string | null;
 
   cart: Cart | null;
+  /** The order just placed, shown until the shopper is done. Cleared when the session ends. */
+  order: Order | null;
   cartOpen: boolean;
 
   agree: () => Promise<void>;
@@ -63,6 +65,8 @@ type State = {
   addToCart: (product: Product, size: string | null, color: string | null) => Promise<AddToCartResult>;
   removeFromCart: (itemId: string) => Promise<CartChangeResult>;
   setCartQuantity: (itemId: string, quantity: number) => Promise<CartChangeResult>;
+  placeOrder: () => Promise<CartChangeResult>;
+  dismissOrder: () => void;
   openCart: () => void;
   closeCart: () => void;
   reset: () => void;
@@ -82,6 +86,19 @@ function inCartOrder<T>(task: () => Promise<T>): Promise<T> {
   const run = cartQueue.then(task, task);
   cartQueue = run.catch(() => undefined);
   return run;
+}
+
+// One per checkout attempt. It is kept after a failure that leaves the outcome unknown (no answer, a server error)
+// so the retry gets the order back if it was in fact placed, and dropped as soon as the outcome is known or the
+// cart changes, so it can never return an old order for a different cart.
+let checkoutKey: string | null = null;
+
+function newKey(): string {
+  const b = crypto.getRandomValues(new Uint8Array(16)); // randomUUID needs a secure context; this does not
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -110,6 +127,7 @@ function changeCart(call: (sessionId: string) => Promise<Cart>): Promise<CartCha
     };
     try {
       apply(await call(sessionId));
+      checkoutKey = null; // the cart changed: a retried checkout is a different one
       return { ok: true };
     } catch (e) {
       if (e instanceof ApiError && (e.status === 404 || e.status === 409)) {
@@ -145,6 +163,7 @@ const initial = {
   job: null,
   resultUrl: null,
   cart: null,
+  order: null,
   cartOpen: false,
 };
 
@@ -294,6 +313,7 @@ export const useKioskStore = create<State>((set, get) => {
           const cart = await api.addToCart({ sessionId, productId: product.id, size, color });
           // The shopper may have left (idle reset) while this was in flight: never show their cart to the next one.
           if (get().session?.id === sessionId) set({ cart });
+          checkoutKey = null;
           return { ok: true };
         } catch (e) {
           return { ok: false, message: describeError(e) };
@@ -304,6 +324,41 @@ export const useKioskStore = create<State>((set, get) => {
 
     setCartQuantity: (itemId, quantity) =>
       changeCart((sessionId) => api.setCartQuantity(sessionId, itemId, quantity)),
+
+    placeOrder: () =>
+      inCartOrder(async (): Promise<CartChangeResult> => {
+        const sessionId = get().session?.id;
+        if (!sessionId) return { ok: false, message: GENERIC_ERROR };
+        const key = (checkoutKey ??= newKey());
+        try {
+          const order = await api.checkout(sessionId, key);
+          checkoutKey = null;
+          if (get().session?.id === sessionId) {
+            const cart = get().cart;
+            set({
+              order,
+              cart: { session_id: sessionId, cart_id: cart?.cart_id ?? null, items: [], item_count: 0, subtotal_pkr: 0 },
+            });
+          }
+          return { ok: true };
+        } catch (e) {
+          if (e instanceof ApiError && e.status >= 400 && e.status < 500) {
+            checkoutKey = null; // refused: the outcome is known
+            if (e.status === 409) {
+              // Short of stock, or the cart was already emptied: show the shopper the real cart.
+              try {
+                const cart = await api.getCart(sessionId);
+                if (get().session?.id === sessionId) set({ cart });
+              } catch {
+                /* keep the message below */
+              }
+            }
+          }
+          return { ok: false, message: describeError(e) };
+        }
+      }),
+
+    dismissOrder: () => set({ order: null }),
 
     openCart: () => {
       set({ cartOpen: true });
@@ -322,6 +377,7 @@ export const useKioskStore = create<State>((set, get) => {
     closeCart: () => set({ cartOpen: false }),
 
     reset: () => {
+      checkoutKey = null;
       epoch++;
       catalogToken++;
       stopFollowingJob();

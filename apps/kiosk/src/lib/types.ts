@@ -73,3 +73,25 @@ export type Cart = {
   item_count: number;
   subtotal_pkr: number;
 };
+
+/** `POST /checkout`: the cart as it was when the order was placed. Payment happens at the counter. */
+export type OrderItem = {
+  product_id: string;
+  product_name: string;
+  garment_image_url: string;
+  size: string | null;
+  color: string | null;
+  quantity: number;
+  unit_price_pkr: number;
+  line_total_pkr: number;
+};
+
+export type Order = {
+  id: string;
+  session_id: string | null;
+  pickup_code: string;
+  item_count: number;
+  subtotal_pkr: number;
+  created_at: string;
+  items: OrderItem[];
+};

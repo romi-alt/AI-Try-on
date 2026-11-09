@@ -5,6 +5,7 @@ import type {
   CatalogPage,
   Category,
   JobState,
+  Order,
   Product,
   Session,
   TryOnAccepted,
@@ -123,6 +124,16 @@ export const api = {
     }),
 
   getCart: (sessionId: string) => request<Cart>(`/cart/${sessionId}`),
+
+  /**
+   * Places an order for the whole cart. Send the same `idempotencyKey` when retrying after a failure that left the
+   * outcome unknown (no answer, a server error): the API then returns the order if it was placed, not a second one.
+   */
+  checkout: (sessionId: string, idempotencyKey: string) =>
+    request<Order>("/checkout", {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId, idempotency_key: idempotencyKey }),
+    }),
 
   /** Sets one line's quantity (1 or more) and returns the updated cart. 409 when there is not enough stock. */
   setCartQuantity: (sessionId: string, itemId: string, quantity: number) =>

@@ -74,3 +74,23 @@ export type Stats = {
 
 export type PresignResponse = { key: string; upload_url: string; public_url: string; expires_in: number };
 export type UploadCheck = { key: string; size_bytes: number; content_type: string; public_url: string };
+
+/** `GET /orders`: a placed order, with names and prices as they were at checkout. Paid for at the counter. */
+export type OrderItem = {
+  product_id: string;
+  product_name: string;
+  size: string | null;
+  color: string | null;
+  quantity: number;
+  unit_price_pkr: number;
+  line_total_pkr: number;
+};
+export type Order = {
+  id: string;
+  session_id: string | null;
+  pickup_code: string;
+  item_count: number;
+  subtotal_pkr: number;
+  created_at: string;
+  items: OrderItem[];
+};

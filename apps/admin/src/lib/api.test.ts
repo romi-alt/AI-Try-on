@@ -188,3 +188,29 @@ describe("uploadImage", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("listOrders", () => {
+  const order = { id: "o1", session_id: null, pickup_code: "K7TQ4M", item_count: 1, subtotal_pkr: 500, created_at: "2026-01-01T00:00:00Z", items: [] };
+
+  it("asks for the latest orders with the admin key", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json([order]));
+    const res = await api.listOrders();
+    expect(res).toEqual([order]);
+    const [url, init] = fetch.mock.calls[0];
+    expect(String(url)).toMatch(/\/orders\?limit=\d+$/);
+    expect(new Headers(init?.headers).has("X-Admin-Key")).toBe(true);
+  });
+
+  it("sends a trimmed pickup code, and none when it is blank", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => json([]));
+    await api.listOrders({ code: "  k7tq4m " });
+    await api.listOrders({ code: "   " });
+    expect(String(fetch.mock.calls[0][0])).toContain("code=k7tq4m");
+    expect(String(fetch.mock.calls[1][0])).not.toContain("code=");
+  });
+
+  it("says how to fix a missing admin key", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ detail: "Invalid admin key" }, 401));
+    await expect(api.listOrders()).rejects.toMatchObject({ status: 401 });
+  });
+});

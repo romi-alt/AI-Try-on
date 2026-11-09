@@ -4,11 +4,12 @@ import type {
   CatalogPage,
   Category,
   Job,
+  Order,
   PresignResponse,
-  UploadCheck,
   Product,
   ProductInput,
   Stats,
+  UploadCheck,
 } from "./types";
 
 /** An API failure carrying a message that is fit to show an admin. */
@@ -151,6 +152,13 @@ export const api = {
       body: JSON.stringify({ key: presign.key }),
     });
     return checked.public_url;
+  },
+
+  /** Recent orders, newest first. `code` finds one by its pickup code (the API ignores case and spaces). */
+  listOrders: ({ code, limit = config.listLimit }: { code?: string; limit?: number } = {}) => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (code?.trim()) q.set("code", code.trim());
+    return request<Order[]>(`/orders?${q}`);
   },
 
   listSessions: (limit: number = config.listLimit) => request<AdminSession[]>(`/sessions?limit=${limit}`),

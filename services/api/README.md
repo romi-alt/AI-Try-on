@@ -17,6 +17,8 @@ FastAPI backend. Owns the catalog, kiosk sessions, presigned uploads and try-on 
 | GET    | `/cart/{session_id}`         | –      | The session's cart with prices and subtotal  |
 | PATCH  | `/cart/{session_id}/items/{item_id}` | – | Set one cart line's quantity (`{"quantity": 1..99}`); returns the cart. 409 if there is not enough stock, 404 if the line is not in this session's cart |
 | DELETE | `/cart/{session_id}/items/{item_id}` | – | Remove one cart line (all its quantity); returns the cart. 404 if the line is not in this session's cart or is already gone |
+| POST   | `/checkout`                  | –      | Turn the session's cart into an order (pay at the counter); 201 with a pickup code, 409 if the cart is empty or stock is short. Resending the same `idempotency_key` returns the order already placed (200) |
+| GET    | `/orders`                    | admin  | Recent orders, newest first; `code` finds one by its pickup code |
 | POST   | `/capture`                   | –      | Upload a webcam photo (multipart `file` + `session_id`); returns its storage key |
 | POST   | `/tryon`                     | –      | Queue a try-on for 1–5 `product_ids`; returns `job_id` immediately (202) |
 | GET    | `/tryon/{id}`                | –      | Job row from Postgres: status, progress, result URL or error |
@@ -48,6 +50,27 @@ FastAPI backend. Owns the catalog, kiosk sessions, presigned uploads and try-on 
 - **Async DB:** the catalog, products, sessions and cart routes use an async SQLAlchemy session
   (`app/core/db.py::get_async_db`). Alembic, the seed script and the try-on/upload/health routes,
   which call blocking clients, use the sync engine.
+
+## Checkout
+
+`POST /checkout` `{session_id, idempotency_key?}` turns the session's cart into an order. **There is no payment
+step: the shopper pays at the counter and shows the six-character pickup code** (letters and digits chosen so they
+cannot be misread, for example no 0/O or 1/I). Nothing about a card or a customer is collected or stored.
+
+- **All or nothing.** The products are locked (in a fixed order, so concurrent checkouts cannot deadlock), stock is
+  checked across every line of each product, and in one transaction the order is written, stock is reduced and the
+  cart is emptied. If any item is short the answer is 409 naming it (`Not enough stock. Linen Shirt: only 1 left`)
+  and nothing changes. An empty cart is also 409.
+- **Prices are copied.** Names, options, image URL and the price at that moment are stored on the order, and
+  `product_id` is not a foreign key, so later catalog edits or deleting a product cannot change an old order.
+- **Retries.** A client that did not get an answer (timeout, dropped connection) cannot tell whether the order was
+  placed. It sends the same `idempotency_key` again and gets the same order back (200) instead of a second one. The
+  key is scoped to the session. The kiosk makes a new key for each attempt and keeps it only while the outcome is
+  unknown.
+- **Stock is taken at checkout, not at add-to-cart.** Several shoppers can still hold the last item in their carts;
+  the first to check out gets it and the others are told it is sold out.
+- **No order management yet.** Orders have no status, so there is no way to mark one collected or cancel it (and
+  cancelling would need to put stock back). `GET /orders` is read-only.
 
 ## Garment image uploads
 
@@ -166,6 +189,8 @@ Migrations live in `alembic/versions/` (`make migrate`; `make migration m="..."`
 | `tryon_jobs` | `session_id`, `product_ids uuid[]` (at least one, not a FK so history survives catalog edits), `status` enum, `progress` 0-100, `person_image_key`, `result_url`, `error`, `created_at`, `updated_at` |
 | `carts`      | one per session                                                                         |
 | `cart_items` | `cart_id`, `product_id` (RESTRICT delete), optional `size` / `color`, `quantity > 0`    |
+| `orders`     | `pickup_code` (unique), `item_count`, `subtotal_pkr`, `session_id` (SET NULL), `idempotency_key` (unique per session) |
+| `order_items`| copied `product_name`, `garment_image_url`, `size`, `color`, `quantity`, `unit_price_pkr`, `line_total_pkr`; `product_id` is not a foreign key |
 
 Seed: `make seed` creates 20 products with generated placeholder images and masks. Pass
 `--no-upload` (`python -m scripts.seed --no-upload`) to write DB rows without touching the bucket.
