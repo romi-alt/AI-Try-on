@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { privacySummary } from "@/lib/privacy";
 import { useKioskStore } from "@/store/useKioskStore";
 
 /** Shown before anything is captured. The API will not start a session without it. */
@@ -19,8 +20,10 @@ export function ConsentScreen() {
 
         <ul className="space-y-3 text-lg text-mist/80">
           <li>We&apos;ll take a photo of you and use it to show you wearing the items you choose.</li>
-          <li>The photo you take is deleted within an hour.</li>
-          <li>You can stop at any time with Exit.</li>
+          {privacySummary().map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+          <li>You can stop at any time with Exit. Tap Privacy below for the full notice.</li>
         </ul>
 
         {error && (

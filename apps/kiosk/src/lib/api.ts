@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { connectivityBus } from "./connectivityBus";
 import type {
   Cart,
   CaptureResult,
@@ -60,8 +61,10 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = DEFA
     });
   } catch (e) {
     if (e instanceof DOMException && e.name === "TimeoutError") {
+      connectivityBus.reportNetworkFailure();
       throw new ApiError(0, "The mirror's server took too long to answer. Please try again.");
     }
+    connectivityBus.reportNetworkFailure();
     throw new ApiError(0, "Can't reach the mirror's server. Please check the connection and try again.");
   }
 
