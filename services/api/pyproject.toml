@@ -6,6 +6,8 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115,<0.116",
     "uvicorn[standard]>=0.30,<0.32",
+    # uvicorn 0.30/0.31 serve WebSockets through websockets' legacy API, which a future major may drop.
+    "websockets>=13,<18",
     "pydantic>=2.9,<3",
     "pydantic-settings>=2.5,<3",
     "sqlalchemy>=2.0.35,<2.1",
@@ -51,4 +53,9 @@ known-third-party = ["alembic"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-filterwarnings = ["ignore::DeprecationWarning:moto.*", "ignore::DeprecationWarning:botocore.*"]
+filterwarnings = [
+    "ignore::DeprecationWarning:moto.*",
+    "ignore::DeprecationWarning:botocore.*",
+    "ignore:websockets.*:DeprecationWarning",
+    "ignore:remove second argument of ws_handler:DeprecationWarning",
+]

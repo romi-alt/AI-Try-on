@@ -94,6 +94,8 @@ services:
       - "${API_PORT:-8000}:8000"
     volumes:
       - ../services/api:/app
+      # Read-only: tests/test_ws_integration.py imports the worker package to run a real job.
+      - ../services/worker:/worker:ro
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     depends_on:
       postgres:

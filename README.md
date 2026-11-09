@@ -20,14 +20,14 @@ infra           docker-compose: Postgres + pgvector, Redis, MinIO (local R2)
 3. The kiosk calls `POST /tryon` with `session_id`, `capture_key` and `product_ids`. The API inserts a
    `queued` job in Postgres, pushes it onto an **RQ** queue in Redis, and returns the `job_id` immediately.
 4. The **worker** picks the job up and runs it through the configured provider (`TRYON_PROVIDER`: `mock`
-   or `fashn`). After every progress step it publishes `{job, status, pct}` to the Redis channel
-   `session:{session_id}:job`.
+   or `fashn`). After every progress step it records the latest state in the Redis hash `job:{id}` and
+   publishes `{job, status, pct}` to the channel `session:{session_id}:job`, in one transaction.
 5. When rendering finishes the worker uploads the result to object storage and publishes
    `{job, status: "done", pct: 100, url}`; on any failure it publishes `{job, status: "failed", pct, error}`
    with a message that is safe to show the shopper.
-
-Pub/sub has no history, so a client should subscribe first and then read `GET /tryon/{job_id}` once for the
-current state (it also works as a polling fallback).
+6. The kiosk follows along on **`WS /ws?session={id}`**, which forwards everything published for its session,
+   with a heartbeat every 25 seconds. After a reconnect, or if WebSockets are unavailable, it reads
+   **`GET /jobs/{id}`** for the current state. Details and a client recipe are in `services/api/README.md`.
 
 Products carry a 512-d pgvector embedding; `GET /products/{id}/similar` returns nearest neighbours.
 

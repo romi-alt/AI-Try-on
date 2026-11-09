@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import admin, capture, cart, catalog, health, products, sessions, tryon, uploads
+from app.api import admin, capture, cart, catalog, health, jobs, products, sessions, tryon, uploads, ws
 from app.core.config import settings
 from app.core.limits import BodySizeLimitMiddleware
 from app.core.logging import RequestLoggingMiddleware, configure_logging
@@ -64,6 +64,8 @@ app.include_router(cart.router)
 app.include_router(capture.router)
 app.include_router(uploads.router)
 app.include_router(tryon.router)
+app.include_router(jobs.router)
+app.include_router(ws.router)
 app.include_router(admin.router)
 
 logger.info("api_started", extra={"cors_origins": settings.cors_origins})

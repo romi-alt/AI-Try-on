@@ -297,14 +297,18 @@ def test_events_only_go_to_the_owning_sessions_channel(env, listen):
     assert env.events.messages() and stranger.messages() == []
 
 
-def test_a_redis_publish_failure_does_not_fail_the_job(env, monkeypatch):
+def test_a_redis_failure_while_reporting_does_not_fail_the_job(env, monkeypatch):
     import redis
+    import redis.client
 
-    monkeypatch.setattr(
-        redis.Redis, "publish", lambda self, *a, **k: (_ for _ in ()).throw(redis.ConnectionError("down"))
-    )
+    def down(self, *args, **kwargs):
+        raise redis.ConnectionError("down")
+
+    monkeypatch.setattr(redis.client.Pipeline, "execute", down)  # events go out through a pipeline
+
     tasks.run_tryon_job(str(env.job_id))
-    assert job_row(env.job_id).status == "done"
+
+    assert job_row(env.job_id).status == "done" and env.events.messages() == []
 
 
 # --- RQ failure callback -------------------------------------------------------------------------

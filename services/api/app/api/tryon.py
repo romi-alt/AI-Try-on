@@ -8,10 +8,12 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import AsyncDb
 from app.core.auth import require_admin
+from app.core.redis import get_redis
 from app.core.storage import capture_key_belongs_to, object_exists
 from app.models import JobStatus, KioskSession, Product, TryOnJob
 from app.schemas.tryon import TryOnAccepted, TryOnCreate, TryOnJobOut
-from app.services.queue import enqueue_tryon, job_channel
+from app.services.job_state import job_channel, write_state
+from app.services.queue import enqueue_tryon
 
 router = APIRouter(prefix="/tryon", tags=["tryon"])
 logger = logging.getLogger("app.tryon")
@@ -54,12 +56,13 @@ async def create_tryon(payload: TryOnCreate, db: AsyncDb):
     await db.refresh(job)
 
     try:
-        await run_in_threadpool(enqueue_tryon, job.id)
+        await run_in_threadpool(enqueue_tryon, job.id, job.session_id)
     except Exception as e:
         logger.exception("tryon_enqueue_failed", extra={"job_id": str(job.id)})
         job.status = JobStatus.failed
         job.error = "The try-on service is busy. Please try again in a moment."
         await db.commit()
+        _announce_failure(job)
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, job.error) from e
 
     logger.info(
@@ -67,6 +70,14 @@ async def create_tryon(payload: TryOnCreate, db: AsyncDb):
         extra={"job_id": str(job.id), "session_id": str(job.session_id), "products": len(product_ids)},
     )
     return TryOnAccepted(job_id=job.id, status=job.status, channel=job_channel(job.session_id))
+
+
+def _announce_failure(job: TryOnJob) -> None:
+    """Best effort: tell listeners (and the state hash) the job failed. Redis may be what broke."""
+    try:
+        write_state(get_redis(), job.id, job.session_id, "failed", 0, error=job.error)
+    except Exception:
+        logger.warning("tryon_failure_announce_failed", extra={"job_id": str(job.id)})
 
 
 @router.get("/{job_id}", response_model=TryOnJobOut)

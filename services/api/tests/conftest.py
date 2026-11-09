@@ -7,8 +7,12 @@ so nothing leaks into the dev database and tests can run alongside seeded data. 
 """
 
 import socket
+import sys
+import threading
+import time
 import uuid
 from collections.abc import AsyncGenerator, Generator
+from pathlib import Path
 
 import boto3
 import httpx
@@ -22,6 +26,12 @@ from app.core import storage
 from app.core.config import settings
 from app.core.db import get_async_db
 from app.main import app
+
+# The cross-service integration test imports the worker package. It lives next to this one in the repo
+# (`services/worker`), and docker-compose mounts it at /worker, so `parents[2] / "worker"` is right in both.
+_WORKER_DIR = Path(__file__).resolve().parents[2] / "worker"
+if _WORKER_DIR.is_dir() and str(_WORKER_DIR) not in sys.path:
+    sys.path.append(str(_WORKER_DIR))  # appended: never shadows anything the API itself provides
 
 
 @pytest.fixture
@@ -134,5 +144,53 @@ def rq_queue(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(settings, "tryon_queue_name", f"test-{uuid.uuid4().hex[:10]}")
     queue = get_queue()
+    conn = redis.Redis.from_url(settings.redis_url)
+    existing = set(conn.scan_iter("job:*"))
     yield queue
     queue.empty()
+    if created := set(conn.scan_iter("job:*")) - existing:  # job state hashes written during the test
+        conn.delete(*created)
+
+
+# --- live server + Redis for WebSocket tests ----------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def live_server():
+    """The real app served by uvicorn in a thread, so WebSocket tests use the real protocol and server."""
+    import uvicorn
+
+    try:  # every WebSocket test needs Redis, so skip them all up front when it is not there
+        redis.Redis.from_url(settings.redis_url, socket_connect_timeout=1).ping()
+    except redis.RedisError:
+        pytest.skip("Redis not reachable")
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    server = uvicorn.Server(
+        uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, lifespan="off")  # no sweeper task
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started:
+        if time.monotonic() > deadline:
+            raise RuntimeError("uvicorn did not start")
+        time.sleep(0.05)
+    yield f"127.0.0.1:{port}"
+    server.should_exit = True
+    thread.join(timeout=10)
+
+
+@pytest.fixture
+async def aredis() -> AsyncGenerator["redis.asyncio.Redis", None]:
+    import redis.asyncio as aioredis
+
+    conn = aioredis.Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        await conn.ping()
+    except redis.RedisError:
+        await conn.aclose()
+        pytest.skip("Redis not reachable")
+    yield conn
+    await conn.aclose()

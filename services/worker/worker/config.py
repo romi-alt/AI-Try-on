@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     # Must match the API's TRYON_QUEUE_NAME.
     tryon_queue_name: str = "tryon"
     job_timeout_seconds: int = 300
+    # How long the latest state of a job (Redis hash `job:{id}`) is kept after its last update.
+    job_state_ttl_seconds: int = 24 * 3600
 
     # S3-compatible storage: MinIO locally, Cloudflare R2 in production.
     s3_endpoint_url: str = "http://localhost:9000"

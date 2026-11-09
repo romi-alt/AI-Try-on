@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     # RQ queue the worker consumes. Must match the worker's TRYON_QUEUE_NAME.
     tryon_queue_name: str = "tryon"
     tryon_job_timeout_seconds: int = 300
+    # How long the latest state of a job (Redis hash `job:{id}`) is kept after its last update.
+    job_state_ttl_seconds: int = 24 * 3600
+
+    # --- WebSocket /ws ---
+    ws_heartbeat_seconds: float = 25.0
+    ws_subscribe_timeout_seconds: float = 5.0
 
     s3_endpoint_url: str = "http://localhost:9000"
     # Endpoint embedded in presigned URLs handed to the browser (host-reachable).

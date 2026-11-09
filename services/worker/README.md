@@ -13,6 +13,10 @@ progress on Redis.
    (`RESULT_URL_EXPIRES_SECONDS`, default 1 hour).
 5. Mark the job `done` and publish `{"job", "status": "done", "pct": 100, "url"}`.
 
+Every update also replaces the Redis hash `job:{id}` (kept `JOB_STATE_TTL_SECONDS`, a day) in the same
+transaction as the publish. The API serves it from `GET /jobs/{id}` for polling and reconnects, and the API's
+`WS /ws` forwards the channel to the kiosk.
+
 Messages on the channel:
 
 ```json

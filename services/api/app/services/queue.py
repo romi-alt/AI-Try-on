@@ -12,7 +12,8 @@ from rq import Callback, Queue
 from rq.serializers import JSONSerializer
 
 from app.core.config import settings
-from app.core.redis import get_rq_redis
+from app.core.redis import get_redis, get_rq_redis
+from app.services.job_state import write_state
 
 JOB_FUNCTION = "worker.tasks.run_tryon_job"
 FAILURE_CALLBACK = "worker.tasks.handle_rq_failure"
@@ -23,11 +24,13 @@ def get_queue() -> Queue:
     return Queue(settings.tryon_queue_name, connection=get_rq_redis(), serializer=JSONSerializer)
 
 
-def job_channel(session_id: uuid.UUID | str) -> str:
-    return f"session:{session_id}:job"
+def enqueue_tryon(job_id: uuid.UUID, session_id: uuid.UUID) -> None:
+    """Record the job as queued (hash + pub/sub), then hand it to the worker.
 
-
-def enqueue_tryon(job_id: uuid.UUID) -> None:
+    The state is written first: once the job is on the queue the worker owns it and may update the
+    hash at any moment, so a later write here could overwrite its progress.
+    """
+    write_state(get_redis(), job_id, session_id, "queued", 0)
     get_queue().enqueue(
         JOB_FUNCTION,
         str(job_id),

@@ -138,7 +138,7 @@ async def test_malformed_body_is_422(api, rq_queue):
 async def test_redis_outage_marks_the_job_failed_and_returns_503(api, adb, s3, rq_queue, monkeypatch):
     sid, product, key = await setup_job_inputs(api, adb)
 
-    def down(job_id):
+    def down(job_id, session_id):
         raise ConnectionError("redis is down")
 
     monkeypatch.setattr("app.api.tryon.enqueue_tryon", down)
