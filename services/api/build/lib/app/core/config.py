@@ -1,0 +1,120 @@
+from functools import lru_cache
+from typing import Literal
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    app_name: str = "tryon-api"
+    log_level: str = "INFO"
+
+    database_url: str = "postgresql+psycopg://tryon:tryon_dev_password@localhost:5432/tryon"
+    redis_url: str = "redis://localhost:6379/0"
+    # RQ queue the worker consumes. Must match the worker's TRYON_QUEUE_NAME.
+    tryon_queue_name: str = "tryon"
+    tryon_job_timeout_seconds: int = 300
+    # Asset jobs (background removal, embeddings) use their own queue and worker so they never delay a try-on.
+    # Must match the worker's ASSETS_QUEUE_NAME.
+    assets_queue_name: str = "assets"
+    assets_job_timeout_seconds: int = 900
+    # How long the latest state of a job (Redis hash `job:{id}`) is kept after its last update.
+    job_state_ttl_seconds: int = 24 * 3600
+
+    api_docs_enabled: bool = True
+
+    # --- error tracking and product analytics (both off until a key is set) ---
+    sentry_dsn: str = ""
+    sentry_environment: str = "development"
+    sentry_release: str = ""
+    sentry_traces_sample_rate: float = Field(default=0.0, ge=0, le=1)
+    # Server-side PostHog events (session_start, capture, tryon_done, add_to_cart, request_outfit): anonymous,
+    # keyed by the session id, no pictures and no personal data.
+    posthog_api_key: str = ""
+    posthog_host: str = "https://us.i.posthog.com"
+
+    # --- rate limiting (see app/core/ratelimit.py for the rules) ---
+    rate_limit_enabled: bool = True
+    # Redis trouble lets requests through instead of refusing them
+    rate_limit_fail_open: bool = True
+    # Multiply every limit, e.g. 2.0 for a shop with several mirrors behind one address
+    rate_limit_scale: float = Field(default=1.0, gt=0)
+    rate_limit_prefix: str = "rl"
+
+    # --- WebSocket /ws ---
+    ws_heartbeat_seconds: float = 25.0
+    ws_subscribe_timeout_seconds: float = 5.0
+
+    s3_endpoint_url: str = "http://localhost:9000"
+    # Endpoint embedded in presigned URLs handed to the browser (host-reachable).
+    s3_presign_endpoint_url: str | None = None
+    s3_region: str = "auto"
+    s3_bucket: str = "tryon-media"
+    s3_access_key_id: str = "minioadmin"
+    s3_secret_access_key: str = "minioadmin_dev_password"
+    s3_public_base_url: str = "http://localhost:9000/tryon-media"
+    presign_expires_seconds: int = 600
+    # Garment images go straight to the bucket (a presigned PUT cannot cap the size), so the size is
+    # checked afterwards: by POST /uploads/verify, and by the sweeper for uploads nobody verified.
+    # Keep this at or above the admin app's own limit (10 MB) so its pre-check never disagrees.
+    garment_max_bytes: int = 10 * 1024 * 1024
+
+    # Largest request body any endpoint accepts, apart from /capture and /products/import (own limits)
+    default_body_limit_bytes: int = 256 * 1024
+
+    # --- webcam captures (POST /capture) ---
+    capture_max_bytes: int = 5 * 1024 * 1024
+    capture_min_height: int = 768
+    # Decoded-pixel ceiling, checked from the header before decoding (decompression-bomb guard).
+    capture_max_pixels: int = 40_000_000
+    # Captures are personal photos: deleted after this long.
+    capture_ttl_seconds: int = 3600
+    # Finished looks show the shopper's face too, so they are deleted on the same schedule (the mobile page
+    # then
+    # shows the cart without the picture). Keep this at or below the worker's RESULT_URL_EXPIRES_SECONDS.
+    result_ttl_seconds: int = 3600
+    capture_cleanup_enabled: bool = True
+    capture_cleanup_interval_seconds: int = 300
+
+    api_cors_origins: str = "http://localhost:3000,http://localhost:3001"
+    admin_api_key: str = Field(default="dev-admin-key", description="Dev-only shared secret")
+    # Floor staff use the staff page with this key (the admin key also works). Dev-only shared secret.
+    staff_api_key: str = Field(default="dev-staff-key", description="Dev-only shared secret")
+
+    # --- "Request Outfit" notifications ---
+    notifier: Literal["console", "whatsapp"] = "console"
+    whatsapp_token: str = ""
+    whatsapp_phone_number_id: str = ""
+    whatsapp_to: str = Field(
+        default="", description="Comma-separated recipient numbers, digits only, with country code"
+    )
+    # A business-initiated WhatsApp message outside a 24 hour customer-service window must be an approved
+    # template. When this is set the notifier sends that template (body parameters: item, size, colour, time)
+    # instead of free text.
+    whatsapp_template_name: str = ""
+    whatsapp_template_language: str = "en"
+    whatsapp_api_base_url: str = "https://graph.facebook.com"
+    whatsapp_api_version: str = "v20.0"
+
+    # --- mobile page (/m/{code}) and payments ---
+    share_link_ttl_seconds: int = 24 * 3600
+    payment_provider: str = "stub"
+    stub_payment_outcome: Literal["paid", "failed"] = "paid"
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [o.strip() for o in self.api_cors_origins.split(",") if o.strip()]
+
+    @property
+    def presign_endpoint(self) -> str:
+        return self.s3_presign_endpoint_url or self.s3_endpoint_url
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
+
+settings = get_settings()

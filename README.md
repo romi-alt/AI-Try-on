@@ -175,6 +175,30 @@ The browser never sees the API's admin key: it calls the app's own `/api/proxy`,
 
 Unit tests (`make test-admin`) cover sign-in, the proxy, the form logic, the CSV helpers and the API client.
 
+## Going to production
+
+- **[DEPLOY.md](DEPLOY.md)**: kiosk and admin on Vercel; API, worker, Redis and Caddy (automatic HTTPS) on a VPS with Docker
+  Compose; Postgres managed. Includes a `preflight.py` that refuses dev keys, `http` origins and retention longer than the
+  privacy promise, plus operations, monitoring and a list of what has not been verified.
+- **[docs/KIOSK_SETUP.md](docs/KIOSK_SETUP.md)**: the mirror computer: Chrome kiosk mode, autostart, camera permission by
+  policy, portrait screen and touch, power and sleep, and what happens when the internet drops.
+
+What production adds to the code:
+
+- **Rate limiting** per session (capture, try-on, cart, share, Request Outfit, checkout) and per address (starting sessions,
+  guessing mobile-page codes, wrong admin/staff keys, WebSocket connects). `429` with `Retry-After`; Redis-backed; fails open.
+- **Input validation** on every public input: bounded lists and strings, no control characters in names and labels, a body-size
+  cap, strict consent (`true` only), and options that must exist on the product.
+- **Privacy**: a photo and its finished look are deleted within one hour (`CAPTURE_TTL_SECONDS`, `RESULT_TTL_SECONDS`), logs and
+  error reports are scrubbed of pictures, signed links and keys, and a **Privacy** badge on every mirror screen opens the full
+  notice (also at `/privacy`). The notice wording is placeholder copy that needs legal review.
+- **Observability**: Sentry in all four services (off without a DSN; no replay, no personal data), five anonymous PostHog events
+  sent from the server (`session_start`, `capture`, `tryon_done`, `add_to_cart`, `request_outfit`), `/health` (liveness) and
+  `/health/ready` (Postgres and Redis required, storage and worker reported), worker `python -m worker.healthcheck`, and
+  `/api/health` on the kiosk and admin.
+- **Offline**: the mirror checks its server and, if it cannot reach it, shows a "reconnecting" cover (a banner during capture and
+  rendering), recovers by itself, and can still reload with no connection thanks to a service worker.
+
 ## Make targets
 
 | Target            | What it does                                                  |
@@ -191,6 +215,8 @@ Unit tests (`make test-admin`) cover sign-in, the proxy, the form logic, the CSV
 | `make benchmark-fake` | Try the latency/cost benchmark against a fake RunPod       |
 | `make test-kiosk` | Run the kiosk's unit tests (host Node, no services)           |
 | `make test-admin` | Run the admin app's unit tests (host Node, no services)       |
+| `make test-deploy` | Test the deploy helpers: preflight, kiosk launcher, policy installer |
+| `make preflight`  | Check `deploy/.env.production` before deploying               |
 | `make lint`       | ESLint + Ruff across all packages                             |
 | `make logs` / `make ps` | Tail logs / list services                               |
 | `make psql`       | psql shell into the dev DB                                    |
@@ -232,7 +258,9 @@ Each package has its own `.env.example` with localhost defaults for this mode.
 - Real try-on: `TRYON_PROVIDER=fashn` with `FASHN_API_KEY`, or `TRYON_PROVIDER=catvton` with `RUNPOD_API_KEY` and
   `RUNPOD_ENDPOINT_ID` (see `services/catvton/README.md`). The provider interface is in
   `services/worker/worker/providers/base.py`.
-- New settings in this release: `NEXT_PUBLIC_PUBLIC_URL`, `NEXT_PUBLIC_POSE_DELEGATE`, `NEXT_PUBLIC_TRYON_SLOW_SECONDS`
+- Production settings (`RATE_LIMIT_*`, `RESULT_TTL_SECONDS`, `API_DOCS_ENABLED`, `SENTRY_*`, `POSTHOG_*`, the kiosk's `NEXT_PUBLIC_SHOP_NAME`,
+  `NEXT_PUBLIC_PHOTO_RETENTION_MINUTES`, `NEXT_PUBLIC_SENTRY_*`) are in each package's `.env.example` and `deploy/.env.production.example`.
+- Earlier settings: `NEXT_PUBLIC_PUBLIC_URL`, `NEXT_PUBLIC_POSE_DELEGATE`, `NEXT_PUBLIC_TRYON_SLOW_SECONDS`
   (kiosk); `STAFF_API_KEY`, `NOTIFIER`, `WHATSAPP_*`, `PAYMENT_PROVIDER`, `STUB_PAYMENT_OUTCOME`, `SHARE_LINK_TTL_SECONDS`,
   `ASSETS_QUEUE_NAME` (API); `WORKER_QUEUES`, `SAM2_CHECKPOINT`, `REMBG_MODEL`, `FASHION_CLIP_MODEL`, `RUNPOD_*`,
   `CATVTON_*` (worker); `NEXTAUTH_URL`, `NEXTAUTH_SECRET`, `ADMIN_USERS`, `ADMIN_API_KEY`, `API_URL` (admin).
@@ -265,6 +293,8 @@ touch screen, GPU pose guidance, and Chromium only (no other browsers). See `ser
 │   ├── api/            FastAPI + SQLAlchemy + Alembic + pgvector
 │   ├── worker/         RQ workers: try-on providers (mock, fashn, catvton), embeddings, background removal
 │   └── catvton/        CatVTON RunPod serverless image + handler + deploy script (GPU; see its README)
+├── deploy/             Production: compose file, Caddyfile, env example, preflight check, kiosk launcher and Chrome policy
+├── docs/               KIOSK_SETUP.md
 ├── infra/
 │   ├── docker-compose.yml
 │   └── postgres/init.sql   (CREATE EXTENSION vector)

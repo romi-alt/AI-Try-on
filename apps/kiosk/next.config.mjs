@@ -4,9 +4,18 @@ import { withSentryConfig } from "@sentry/nextjs";
 const nextConfig = {
   reactStrictMode: true,
   experimental: { instrumentationHook: true }, // loads src/instrumentation.ts (Sentry on the server)
-  output: "standalone",
+  // The Docker image uses the standalone server; on Vercel (VERCEL=1) Vercel builds its own output.
+  output: process.env.VERCEL ? undefined : "standalone",
   async headers() {
+    const security = [
+      { key: "X-Content-Type-Options", value: "nosniff" },
+      { key: "Referrer-Policy", value: "no-referrer" },
+      { key: "X-Frame-Options", value: "DENY" },
+      // The mirror needs its camera (and nothing else); the browser must not offer anything more to this page.
+      { key: "Permissions-Policy", value: "camera=(self), microphone=(), geolocation=(), payment=()" },
+    ];
     return [
+      { source: "/:path*", headers: security },
       // The service worker file itself must always be re-checked, or a fixed worker would never reach the mirror.
       { source: "/sw.js", headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }, { key: "Service-Worker-Allowed", value: "/" }] },
     ];

@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.production.example
 
 # Node
 node_modules/
@@ -34,3 +35,6 @@ infra/data/
 
 # MediaPipe WASM and model, fetched by apps/kiosk/scripts/fetch-pose-assets.mjs
 apps/kiosk/public/mediapipe/
+
+# Production secrets
+deploy/.env.production

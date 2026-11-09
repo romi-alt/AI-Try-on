@@ -1,0 +1,68 @@
+# Caddy: HTTPS for the API, in front of the Docker network. Certificates are fetched and renewed automatically
+# (Let's Encrypt), so the only requirements are that API_DOMAIN's DNS points at this server and ports 80 and 443
+# are open. WebSockets (/ws, /ws/staff) pass through reverse_proxy with no extra settings.
+#
+# Set API_DOMAIN and ACME_EMAIL in deploy/.env.production (both are required).
+#
+# NOT VALIDATED with `caddy validate` by the author (no Caddy binary could be run where this was written). Run it
+# once on the server before relying on it:  docker compose run --rm caddy caddy validate --config /etc/caddy/Caddyfile
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$API_DOMAIN} {
+	encode zstd gzip
+
+	# A photo is at most 5 MB; everything else is tiny. The API enforces its own limits too: this keeps oversized
+	# bodies from ever reaching it.
+	request_body {
+		max_size 6MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	reverse_proxy api:8000 {
+		# Take an unhealthy API out of rotation; /health is the cheap liveness check.
+		health_uri /health
+		health_interval 15s
+		health_timeout 3s
+		# Do not buffer: WebSocket frames and progress updates must flow straight through.
+		flush_interval -1
+	}
+
+	# Access log with the privacy-sensitive parts removed: the client address is truncated, secrets are dropped, and
+	# the code in /m/CODE (a 24 hour credential) and signed-URL queries are masked.
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>remote_ip ip_mask {
+					ipv4 24
+					ipv6 56
+				}
+				request>client_ip ip_mask {
+					ipv4 24
+					ipv6 56
+				}
+				request>headers>Authorization delete
+				request>headers>Cookie delete
+				request>headers>X-Admin-Key delete
+				request>headers>X-Staff-Key delete
+				request>uri regexp (^/m/)[A-Za-z0-9%]+ $1[code]
+				request>uri query {
+					delete X-Amz-Signature
+					delete X-Amz-Credential
+					delete X-Amz-Security-Token
+					delete Signature
+				}
+			}
+		}
+	}
+}

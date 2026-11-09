@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ELEVARIQ Mirror
+Comment=Starts the virtual try-on mirror in kiosk mode and keeps it running
+Exec=/opt/elevariq-kiosk/start-kiosk.sh
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=3
+Terminal=false
