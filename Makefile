@@ -73,6 +73,10 @@ test: ## Run API and worker tests (needs the stack up and `make migrate` done)
 	$(API_EXEC) pytest -q
 	$(COMPOSE) exec worker pytest -q
 
+.PHONY: test-kiosk
+test-kiosk: ## Run the kiosk's unit tests (host Node; no services needed)
+	npm test --workspace apps/kiosk
+
 .PHONY: lifecycle
 lifecycle: ## Add the bucket lifecycle rule that expires captures/ after a day (backstop to the 1h sweeper)
 	$(API_EXEC) python -m scripts.apply_lifecycle

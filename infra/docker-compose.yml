@@ -132,8 +132,8 @@ services:
       dockerfile: apps/kiosk/Dockerfile
       target: dev
     environment:
+      # Product and result images come back from the API as full URLs, so no media URL is needed here.
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
-      NEXT_PUBLIC_MEDIA_BASE_URL: ${S3_PUBLIC_BASE_URL:-http://localhost:9000/tryon-media}
       WATCHPACK_POLLING: "true"
     ports:
       - "${KIOSK_PORT:-3000}:3000"

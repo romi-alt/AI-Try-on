@@ -1,7 +1,7 @@
 # AI Try-On Mirror
 
 An AI virtual try-on mirror. A laptop webcam acts as the mirror: the shopper picks a
-garment, the kiosk captures a frame, and a worker renders the garment onto them.
+outfit, the kiosk captures a frame, and a worker renders the items onto them.
 
 ```
 apps/kiosk      Next.js 14 (App Router, TS, Tailwind, Zustand) — the mirror UI
@@ -68,7 +68,30 @@ Then open:
 | API docs        | http://localhost:8000/docs   |
 | MinIO console   | http://localhost:9001 (creds in `.env`) |
 
-The browser will ask for camera permission on the kiosk's try-on screen.
+The browser will ask for camera permission once the shopper agrees on the consent screen.
+
+## The kiosk
+
+`apps/kiosk` is what the shopper uses, on a laptop-sized screen:
+
+1. **Consent.** Nothing is captured and the camera stays off until the shopper agrees. Agreeing starts the session.
+   The consent text is placeholder copy and needs review before real use.
+2. **Choose.** The catalog (`GET /catalog`) with category tabs, an *On sale* toggle, search and *Show more* paging.
+   Up to 5 items can be picked as one outfit, and the outfit survives filter changes.
+3. **Try on.** A 3-2-1 countdown, then one frame is cropped to a 3:4 portrait (a landscape webcam would be
+   refused by the API) and sent to `POST /capture`, then `POST /tryon`.
+4. **Watch.** Progress comes over a WebSocket held open for the whole session. It reconnects with backoff,
+   replaces a connection that has gone silent, and polls `GET /jobs/{id}` every 2 seconds while the socket is
+   down, so a look still finishes if WebSockets are blocked. Failures show the worker's readable message.
+5. **Result.** The result image, with a size and colour choice per item and *Add to cart*. The cart drawer shows
+   the API's totals. The camera is switched off while the result is shown.
+
+Leaving the page (Exit) ends the session and closes the live connection. There is no idle timeout yet, and the
+cart is add-only because the API has no remove endpoint.
+
+Configuration is in `apps/kiosk/.env.example` (`NEXT_PUBLIC_API_URL`, optional `NEXT_PUBLIC_WS_URL`). These are
+read at build time, so rebuild after changing them. Unit tests (`make test-kiosk`) cover the live-update
+follower, the store's async flow, the API client and the photo crop; they need no services.
 
 ## Make targets
 
@@ -81,6 +104,7 @@ The browser will ask for camera permission on the kiosk's try-on screen.
 | `make seed`       | Seed 20 demo products (idempotent)                            |
 | `make lifecycle`  | Add the bucket lifecycle backstop for `captures/`             |
 | `make test`       | Run API and worker tests                                      |
+| `make test-kiosk` | Run the kiosk's unit tests (host Node, no services)           |
 | `make lint`       | ESLint + Ruff across all packages                             |
 | `make logs` / `make ps` | Tail logs / list services                               |
 | `make psql`       | psql shell into the dev DB                                    |
@@ -127,7 +151,7 @@ Each package has its own `.env.example` with localhost defaults for this mode.
 ```
 .
 ├── apps/
-│   ├── kiosk/          Next.js kiosk (webcam mirror, garment carousel, result view)
+│   ├── kiosk/          Next.js kiosk (consent, catalog, webcam mirror, live progress, outfit options, cart)
 │   └── admin/          Next.js admin (garments CRUD, sessions, jobs, stats)
 ├── services/
 │   ├── api/            FastAPI + SQLAlchemy + Alembic + pgvector

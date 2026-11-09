@@ -18,6 +18,13 @@ body {
 }
 
 /* Mirror the webcam so the user sees themselves as in a real mirror. */
+/* The kiosk blocks text selection, but inputs must stay typeable (Safari treats user-select:none as read-only). */
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 .mirrored {
   transform: scaleX(-1);
 }
