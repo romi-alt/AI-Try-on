@@ -28,3 +28,16 @@ S3_PRESIGN_ENDPOINT_URL=https://<account-id>.r2.cloudflarestorage.com
 ```
 
 Nothing else in the code changes.
+
+## Browser uploads and CORS
+
+The admin app uploads product images from the browser straight to the bucket with a presigned PUT URL, so the
+bucket must allow cross-origin PUT from the admin app's origin. MinIO allows it by default. Cloudflare R2 needs a
+rule such as:
+
+```json
+[{"AllowedOrigins": ["https://admin.example.com"], "AllowedMethods": ["PUT", "GET"], "AllowedHeaders": ["Content-Type"], "MaxAgeSeconds": 3600}]
+```
+
+Without it the admin app reports "Couldn't upload the image ... a CORS rule allowing PUT". Product images are also
+shown by the kiosk, so the bucket (or a custom domain in front of it) must be publicly readable.

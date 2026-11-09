@@ -93,6 +93,26 @@ Configuration is in `apps/kiosk/.env.example` (`NEXT_PUBLIC_API_URL`, optional `
 read at build time, so rebuild after changing them. Unit tests (`make test-kiosk`) cover the live-update
 follower, the store's async flow, the API client and the photo crop; they need no services.
 
+## The admin app
+
+`apps/admin` (http://localhost:3001) is for the shop's staff. Every request carries the dev admin key
+(`X-Admin-Key`, see `apps/admin/.env.example`).
+
+- **Overview.** Today's counters and the queue depth from `GET /admin/stats`.
+- **Products.** The catalog (`GET /catalog`, sold-out items included) with category, on-sale and search filters and
+  paging. Stock is edited in place. Add and edit use a side form: price, optional sale price, stock, sizes, colours
+  and a garment image (plus an optional mask). Images go in two steps, a presigned URL from `POST /uploads/presign`
+  and then a PUT straight to the bucket, so **the bucket must allow CORS PUT from the admin origin** (MinIO does by
+  default; for Cloudflare R2 add a CORS rule). Deleting a product that is in a cart is refused by the API, and the
+  page suggests setting its stock to 0 instead.
+- **Sessions.** The latest sessions with their try-on counts.
+- **Try-on jobs.** The latest jobs, refreshed every few seconds, with product names, progress, duration, the
+  worker's error for failed ones and, for finished ones, a link to the result. Result links are signed and expire,
+  so an expired one is shown as such. Results are shoppers' photos, so they open on request rather than showing
+  as thumbnails.
+
+Unit tests (`make test-admin`) cover the form validation and payload building, the API client and the helpers.
+
 ## Make targets
 
 | Target            | What it does                                                  |
@@ -105,6 +125,7 @@ follower, the store's async flow, the API client and the photo crop; they need n
 | `make lifecycle`  | Add the bucket lifecycle backstop for `captures/`             |
 | `make test`       | Run API and worker tests                                      |
 | `make test-kiosk` | Run the kiosk's unit tests (host Node, no services)           |
+| `make test-admin` | Run the admin app's unit tests (host Node, no services)       |
 | `make lint`       | ESLint + Ruff across all packages                             |
 | `make logs` / `make ps` | Tail logs / list services                               |
 | `make psql`       | psql shell into the dev DB                                    |
@@ -152,7 +173,7 @@ Each package has its own `.env.example` with localhost defaults for this mode.
 .
 ├── apps/
 │   ├── kiosk/          Next.js kiosk (consent, catalog, webcam mirror, live progress, outfit options, cart)
-│   └── admin/          Next.js admin (garments CRUD, sessions, jobs, stats)
+│   └── admin/          Next.js admin (products CRUD, sessions, try-on jobs, stats)
 ├── services/
 │   ├── api/            FastAPI + SQLAlchemy + Alembic + pgvector
 │   └── worker/         RQ worker + try-on providers (mock, fashn)

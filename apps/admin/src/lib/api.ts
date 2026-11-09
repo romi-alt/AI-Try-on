@@ -1,102 +1,153 @@
-export type Garment = {
-  id: string;
-  sku: string;
-  name: string;
-  brand: string | null;
-  category: "top" | "bottom" | "dress" | "outerwear" | "accessory";
-  color: string | null;
-  price_cents: number | null;
-  image_key: string;
-  image_url: string;
-  is_active: boolean;
-  created_at: string;
-};
+import { config } from "./config";
+import type {
+  AdminSession,
+  CatalogPage,
+  Category,
+  Job,
+  PresignResponse,
+  Product,
+  ProductInput,
+  Stats,
+} from "./types";
 
-export type GarmentInput = Omit<Garment, "id" | "image_url" | "created_at">;
+/** An API failure carrying a message that is fit to show an admin. */
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
 
-export type Session = {
-  id: string;
-  kiosk_id: string;
-  started_at: string;
-  ended_at: string | null;
-  job_count: number;
-};
+/** FastAPI sends `{detail: "text"}`, or `{detail: [{msg, loc, ...}]}` for validation errors. */
+export function messageFromDetail(detail: unknown, fallback: string): string {
+  if (typeof detail === "string" && detail) return detail;
+  if (Array.isArray(detail)) {
+    const msgs = detail
+      .map((d) => {
+        if (!d || typeof d !== "object" || !("msg" in d)) return "";
+        const loc = (d as { loc?: unknown[] }).loc;
+        const field = Array.isArray(loc) ? loc.filter((p) => typeof p === "string" && p !== "body").join(".") : "";
+        const msg = String((d as { msg: unknown }).msg).replace(/^Value error, /, "");
+        return field ? `${field}: ${msg}` : msg;
+      })
+      .filter(Boolean);
+    if (msgs.length) return msgs.join(". ");
+  }
+  return fallback;
+}
 
-export type TryOnJob = {
-  id: string;
-  session_id: string;
-  garment_id: string;
-  status: "queued" | "processing" | "done" | "failed";
-  capture_key: string;
-  result_key: string | null;
-  result_url: string | null;
-  error: string | null;
-  created_at: string;
-  updated_at: string;
-};
+const DEFAULT_TIMEOUT_MS = 15_000;
+const UPLOAD_TIMEOUT_MS = 60_000;
+const UNAUTHORIZED =
+  "The API rejected the admin key. Check that NEXT_PUBLIC_ADMIN_API_KEY matches ADMIN_API_KEY on the API.";
 
-export type Stats = {
-  garments_active: number;
-  sessions_today: number;
-  jobs_today: number;
-  jobs_failed_today: number;
-  queue_depth: number;
-};
+async function request<T>(path: string, init: RequestInit = {}, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
+  const headers = new Headers(init.headers);
+  headers.set("X-Admin-Key", config.adminKey);
+  if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
 
-export type PresignResponse = {
-  key: string;
-  upload_url: string;
-  public_url: string;
-  expires_in: number;
-};
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-const ADMIN_KEY = process.env.NEXT_PUBLIC_ADMIN_API_KEY ?? "";
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      "X-Admin-Key": ADMIN_KEY,
-      ...(init?.headers ?? {}),
-    },
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      detail = ((await res.json()) as { detail?: string }).detail ?? detail;
-    } catch {
-      /* ignore */
+  let res: Response;
+  try {
+    res = await fetch(`${config.apiUrl}${path}`, {
+      ...init,
+      headers,
+      cache: "no-store",
+      signal: init.signal ?? AbortSignal.timeout(timeoutMs),
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "TimeoutError") {
+      throw new ApiError(0, "The API took too long to answer.");
     }
-    throw new Error(`${res.status} ${detail}`);
+    throw new ApiError(0, `Can't reach the API at ${config.apiUrl}.`);
+  }
+
+  if (!res.ok) {
+    if (res.status === 401) throw new ApiError(401, UNAUTHORIZED);
+    let detail: unknown;
+    try {
+      detail = ((await res.json()) as { detail?: unknown }).detail;
+    } catch {
+      /* not JSON */
+    }
+    throw new ApiError(res.status, messageFromDetail(detail, res.statusText || "Something went wrong."));
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
+export type ProductQuery = {
+  category?: Category | "all";
+  search?: string;
+  onSale?: boolean;
+  page?: number;
+  pageSize?: number;
+};
+
+export const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
+
 export const api = {
   stats: () => request<Stats>("/admin/stats"),
 
-  listGarments: (includeInactive = true) =>
-    request<Garment[]>(`/garments?include_inactive=${includeInactive}`),
-  createGarment: (input: GarmentInput) =>
-    request<Garment>("/garments", { method: "POST", body: JSON.stringify(input) }),
-  updateGarment: (id: string, patch: Partial<GarmentInput>) =>
-    request<Garment>(`/garments/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
-  deleteGarment: (id: string) => request<void>(`/garments/${id}`, { method: "DELETE" }),
-
-  presignUpload: (contentType: string) =>
-    request<PresignResponse>("/uploads/presign", {
-      method: "POST",
-      body: JSON.stringify({ content_type: contentType, kind: "garment" }),
-    }),
-  uploadToPresigned: async (uploadUrl: string, file: File) => {
-    const res = await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
-    if (!res.ok) throw new Error(`Upload failed (${res.status})`);
+  /** The catalog endpoint lists every product, sold out or not, which is what an admin wants. */
+  listProducts: ({ category, search, onSale, page = 1, pageSize = config.productsPageSize }: ProductQuery = {}) => {
+    const q = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+    if (category && category !== "all") q.set("category", category);
+    if (onSale) q.set("on_sale", "true");
+    if (search?.trim()) q.set("search", search.trim());
+    return request<CatalogPage>(`/catalog?${q}`);
   },
 
-  listSessions: (limit = 50) => request<Session[]>(`/sessions?limit=${limit}`),
-  listJobs: (limit = 50) => request<TryOnJob[]>(`/tryon?limit=${limit}`),
+  /** Every product, following the pages. Used to show product names on the jobs page. */
+  listAllProducts: async (): Promise<Product[]> => {
+    const all: Product[] = [];
+    for (let page = 1; page <= 20; page++) {
+      const res = await request<CatalogPage>(`/catalog?page=${page}&page_size=100`);
+      all.push(...res.items);
+      if (page >= res.pages) break;
+    }
+    return all;
+  },
+
+  createProduct: (input: ProductInput) =>
+    request<Product>("/products", { method: "POST", body: JSON.stringify(input) }),
+
+  /** Only the fields present are changed. Send `null` explicitly to clear an optional field. */
+  updateProduct: (id: string, patch: Partial<ProductInput>) =>
+    request<Product>(`/products/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+
+  deleteProduct: (id: string) => request<void>(`/products/${id}`, { method: "DELETE" }),
+
+  /**
+   * Uploads an image straight to object storage and returns the URL to store on the product:
+   * ask the API for a presigned PUT URL, then PUT the file to it.
+   */
+  uploadImage: async (file: File): Promise<string> => {
+    const presign = await request<PresignResponse>("/uploads/presign", {
+      method: "POST",
+      body: JSON.stringify({ content_type: file.type, kind: "garment" }),
+    });
+    let res: Response;
+    try {
+      res = await fetch(presign.upload_url, {
+        method: "PUT",
+        body: file,
+        headers: { "Content-Type": file.type },
+        signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+      });
+    } catch {
+      throw new ApiError(
+        0,
+        "Couldn't upload the image. If the API is fine, the storage bucket probably needs a CORS rule allowing PUT from this site.",
+      );
+    }
+    if (!res.ok) throw new ApiError(res.status, `The storage service rejected the upload (HTTP ${res.status}).`);
+    return presign.public_url;
+  },
+
+  listSessions: (limit: number = config.listLimit) => request<AdminSession[]>(`/sessions?limit=${limit}`),
+
+  listJobs: (limit: number = config.listLimit) => request<Job[]>(`/tryon?limit=${limit}`),
 };
