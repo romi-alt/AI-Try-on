@@ -5,7 +5,8 @@ from pydantic import BaseModel
 
 class PresignRequest(BaseModel):
     content_type: Literal["image/jpeg", "image/png", "image/webp"]
-    kind: Literal["capture", "garment"] = "capture"
+    # Webcam captures go through POST /capture (validated and sanitised), never direct to storage.
+    kind: Literal["garment"] = "garment"
 
 
 class PresignResponse(BaseModel):

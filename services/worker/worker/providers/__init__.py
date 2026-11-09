@@ -1,13 +1,20 @@
 from worker.config import settings
-from worker.providers.base import TryOnProvider
-from worker.providers.replicate import ReplicateProvider
-from worker.providers.stub import StubProvider
+from worker.providers.base import ProviderError, TryOnProvider
+from worker.providers.fashn import FashnProvider
+from worker.providers.mock import MockProvider
+
+__all__ = ["FashnProvider", "MockProvider", "ProviderError", "TryOnProvider", "get_provider"]
 
 
 def get_provider() -> TryOnProvider:
-    name = settings.tryon_provider.lower()
-    if name == "stub":
-        return StubProvider()
-    if name == "replicate":
-        return ReplicateProvider()
-    raise ValueError(f"Unknown TRYON_PROVIDER {name!r}")
+    """Pick the provider named by TRYON_PROVIDER ('mock' or 'fashn')."""
+    name = settings.tryon_provider
+    if name == "mock":
+        return MockProvider(
+            duration_seconds=settings.mock_duration_seconds,
+            steps=settings.mock_steps,
+            fail=settings.mock_fail,
+        )
+    if name == "fashn":
+        return FashnProvider()
+    raise ValueError(f"Unknown TRYON_PROVIDER {name!r}; expected 'mock' or 'fashn'")

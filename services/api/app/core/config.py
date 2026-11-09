@@ -12,7 +12,9 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://tryon:tryon_dev_password@localhost:5432/tryon"
     redis_url: str = "redis://localhost:6379/0"
-    tryon_queue_key: str = "tryon:jobs"
+    # RQ queue the worker consumes. Must match the worker's TRYON_QUEUE_NAME.
+    tryon_queue_name: str = "tryon"
+    tryon_job_timeout_seconds: int = 300
 
     s3_endpoint_url: str = "http://localhost:9000"
     # Endpoint embedded in presigned URLs handed to the browser (host-reachable).
@@ -23,6 +25,16 @@ class Settings(BaseSettings):
     s3_secret_access_key: str = "minioadmin_dev_password"
     s3_public_base_url: str = "http://localhost:9000/tryon-media"
     presign_expires_seconds: int = 600
+
+    # --- webcam captures (POST /capture) ---
+    capture_max_bytes: int = 5 * 1024 * 1024
+    capture_min_height: int = 768
+    # Decoded-pixel ceiling, checked from the header before decoding (decompression-bomb guard).
+    capture_max_pixels: int = 40_000_000
+    # Captures are personal photos: deleted after this long.
+    capture_ttl_seconds: int = 3600
+    capture_cleanup_enabled: bool = True
+    capture_cleanup_interval_seconds: int = 300
 
     api_cors_origins: str = "http://localhost:3000,http://localhost:3001"
     admin_api_key: str = Field(default="dev-admin-key", description="Dev-only shared secret")

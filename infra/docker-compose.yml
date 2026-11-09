@@ -14,7 +14,7 @@ x-common-env: &common-env
   S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-http://localhost:9000/tryon-media}
   # Presigned URLs are consumed by the browser, so they must point at the host-visible endpoint.
   S3_PRESIGN_ENDPOINT_URL: http://localhost:${MINIO_PORT:-9000}
-  TRYON_PROVIDER: ${TRYON_PROVIDER:-stub}
+  TRYON_QUEUE_NAME: ${TRYON_QUEUE_NAME:-tryon}
   LOG_LEVEL: INFO
 
 services:
@@ -108,6 +108,11 @@ services:
       context: ../services/worker
     environment:
       <<: *common-env
+      # "mock" (default, offline, 8s) or "fashn" (hosted; needs FASHN_API_KEY in .env)
+      TRYON_PROVIDER: ${TRYON_PROVIDER:-mock}
+      FASHN_API_KEY: ${FASHN_API_KEY:-}
+      MOCK_DURATION_SECONDS: ${MOCK_DURATION_SECONDS:-8}
+      MOCK_FAIL: ${MOCK_FAIL:-false}
     volumes:
       - ../services/worker:/app
     command: python -m worker.main

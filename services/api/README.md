@@ -15,9 +15,10 @@ FastAPI backend. Owns the catalog, kiosk sessions, presigned uploads and try-on 
 | GET    | `/sessions`                  | admin  | Sessions with try-on counts                  |
 | POST   | `/cart/add`                  | –      | Add a product (size/color/quantity) to the session's cart; returns the cart |
 | GET    | `/cart/{session_id}`         | –      | The session's cart with prices and subtotal  |
-| POST   | `/uploads/presign`           | –      | Presigned PUT URL for a capture/garment image|
-| POST   | `/tryon`                     | –      | Enqueue a job for 1–5 `product_ids` (202)    |
-| GET    | `/tryon/{id}`                | –      | Poll job status / result URL                 |
+| POST   | `/capture`                   | –      | Upload a webcam photo (multipart `file` + `session_id`); returns its storage key |
+| POST   | `/tryon`                     | –      | Queue a try-on for 1–5 `product_ids`; returns `job_id` immediately (202) |
+| GET    | `/tryon/{id}`                | –      | Job state: status, progress, result URL or error |
+| POST   | `/uploads/presign`           | –      | Presigned PUT URL for admin garment images   |
 | GET    | `/tryon`                     | admin  | Recent jobs                                  |
 | GET    | `/admin/stats`               | admin  | Dashboard counters                           |
 
@@ -38,6 +39,37 @@ FastAPI backend. Owns the catalog, kiosk sessions, presigned uploads and try-on 
 - **Async DB:** the catalog, products, sessions and cart routes use an async SQLAlchemy session
   (`app/core/db.py::get_async_db`). Alembic, the seed script and the try-on/upload/health routes,
   which call blocking clients, use the sync engine.
+
+## Capture and try-on
+
+**`POST /capture`** (multipart: `file`, `session_id`) accepts JPEG or WebP only. The format is detected from the
+bytes, not the `Content-Type`. Limits and rules:
+
+| Rule | Result |
+|------|--------|
+| larger than 5 MB | 413 (also enforced while the body streams, so oversized uploads are cut off early) |
+| not JPEG/WebP, corrupt, animated | 415 / 422 |
+| EXIF orientation | applied first, so a sideways phone photo is judged and stored as displayed |
+| shorter than 768px, or not portrait | 422 with the measured size in the message |
+| more than 40 megapixels | 422, checked from the header before decoding |
+| unknown session | 404 |
+
+The stored image is rebuilt from pixels as WebP, so EXIF, GPS, ICC and XMP cannot survive. It is saved as
+`captures/{session_id}/{uuid}.webp` and the response is `{key, width, height, content_type, size_bytes,
+expires_in_seconds}`.
+
+**Retention.** Captures are personal photos and are deleted after `CAPTURE_TTL_SECONDS` (1 hour). Object-store
+lifecycle rules only work in whole days, so the hour is enforced by a background sweeper in the API
+(every `CAPTURE_CLEANUP_INTERVAL_SECONDS`, default 5 minutes). `make lifecycle` additionally installs a
+1-day bucket rule as a coarse safety net in case the API is down. Generated results under `results/` have no
+expiry rule yet.
+
+**`POST /tryon`** takes `{session_id, capture_key, product_ids}`. The key must be one `/capture` issued to
+that same session. It inserts a `queued` row, enqueues an RQ job (the RQ job id is the `tryon_jobs.id`) and
+returns `{job_id, status: "queued", channel}` straight away. Follow it on the Redis channel
+`session:{session_id}:job` (messages `{job, status, pct}`, then `{status: "done", url}` or
+`{status: "failed", error}`), or poll `GET /tryon/{job_id}`. If Redis is down the job is marked failed and the
+API answers 503.
 
 ## Data model
 

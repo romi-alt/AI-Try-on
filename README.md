@@ -6,27 +6,37 @@ garment, the kiosk captures a frame, and a worker renders the garment onto them.
 ```
 apps/kiosk      Next.js 14 (App Router, TS, Tailwind, Zustand) — the mirror UI
 apps/admin      Next.js 14 — catalog, sessions and job monitoring
-services/api    FastAPI — catalog, sessions, presigned uploads, try-on jobs
-services/worker Python — consumes the Redis queue and renders try-ons
+services/api    FastAPI — catalog, sessions, cart, capture upload, try-on jobs
+services/worker Python — RQ worker that renders try-ons
 infra           docker-compose: Postgres + pgvector, Redis, MinIO (local R2)
 ```
 
 ## How a try-on flows
 
-1. Kiosk starts a **session** (`POST /sessions`) and loads the **product** catalog.
-2. Shopper picks a garment and taps *Try it on*. The kiosk grabs a webcam frame.
-3. Kiosk asks the API for a **presigned PUT URL** and uploads the JPEG straight to
-   object storage (MinIO locally, Cloudflare R2 in prod). Image bytes never pass
-   through the API.
-4. Kiosk creates a **try-on job** (`POST /tryon`). The API records it in Postgres and
-   pushes the job id onto a Redis list.
-5. The **worker** pops the job, downloads capture + garment, runs the configured
-   provider (`stub` by default, `replicate` for a hosted VTON model), writes the
-   result image to storage and marks the job done.
-6. Kiosk polls `GET /tryon/{id}` and shows the result.
+1. Kiosk starts a **session** (`POST /sessions`, only accepted with `consent_given: true`) and loads the catalog (`GET /catalog`).
+2. The shopper taps *Try it on*. The kiosk uploads a webcam frame to `POST /capture`. The API checks it
+   (JPEG or WebP, max 5 MB, portrait, at least 768px tall), strips EXIF, stores it as WebP under
+   `captures/{session_id}/{uuid}.webp` and returns the key. Captures are deleted after an hour.
+3. The kiosk calls `POST /tryon` with `session_id`, `capture_key` and `product_ids`. The API inserts a
+   `queued` job in Postgres, pushes it onto an **RQ** queue in Redis, and returns the `job_id` immediately.
+4. The **worker** picks the job up and runs it through the configured provider (`TRYON_PROVIDER`: `mock`
+   or `fashn`). After every progress step it publishes `{job, status, pct}` to the Redis channel
+   `session:{session_id}:job`.
+5. When rendering finishes the worker uploads the result to object storage and publishes
+   `{job, status: "done", pct: 100, url}`; on any failure it publishes `{job, status: "failed", pct, error}`
+   with a message that is safe to show the shopper.
 
-Products carry a 512-d pgvector embedding; `GET /products/{id}/similar` returns
-nearest neighbours for "you might also like" shelves.
+Pub/sub has no history, so a client should subscribe first and then read `GET /tryon/{job_id}` once for the
+current state (it also works as a polling fallback).
+
+Products carry a 512-d pgvector embedding; `GET /products/{id}/similar` returns nearest neighbours.
+
+### Try-on providers
+
+| `TRYON_PROVIDER` | What it does |
+|------------------|--------------|
+| `mock` (default) | Offline. Waits `MOCK_DURATION_SECONDS` (8) while reporting progress, then returns the photo with the garments and a "MOCK TRY-ON" banner. `MOCK_FAIL=true` forces failures. |
+| `fashn`          | Calls the hosted [FASHN](https://docs.fashn.ai) API. Needs `FASHN_API_KEY`. Tops, bottoms and dresses only; outfits are applied one garment at a time. |
 
 ## Prerequisites
 
@@ -46,6 +56,7 @@ In a second terminal, once `api` is up:
 ```bash
 make migrate    # alembic upgrade head
 make seed       # 20 demo products + placeholder images/masks in the bucket
+make lifecycle  # optional: day-long expiry rule on captures/ (the API sweeper enforces the hour)
 ```
 
 Then open:
@@ -68,7 +79,8 @@ The browser will ask for camera permission on the kiosk's try-on screen.
 | `make migrate`    | Run Alembic migrations                                        |
 | `make migration m="..."` | Autogenerate a migration from model changes            |
 | `make seed`       | Seed 20 demo products (idempotent)                            |
-| `make test`       | Run API tests                                                 |
+| `make lifecycle`  | Add the bucket lifecycle backstop for `captures/`             |
+| `make test`       | Run API and worker tests                                      |
 | `make lint`       | ESLint + Ruff across all packages                             |
 | `make logs` / `make ps` | Tail logs / list services                               |
 | `make psql`       | psql shell into the dev DB                                    |
@@ -107,9 +119,8 @@ Each package has its own `.env.example` with localhost defaults for this mode.
 - Admin endpoints use a shared `X-Admin-Key` header for now. Replace
   `services/api/app/core/auth.py` with a real identity provider before going public.
 - Switching from MinIO to Cloudflare R2 is env-only; see `infra/README.md`.
-- Real try-on models: set `TRYON_PROVIDER=replicate` and the Replicate token in
-  `services/worker/.env`. The worker's provider interface is in
-  `services/worker/worker/providers/base.py`.
+- Real try-on: set `TRYON_PROVIDER=fashn` and `FASHN_API_KEY` in the root `.env`. The provider interface is
+  in `services/worker/worker/providers/base.py`.
 
 ## Repo layout
 
@@ -120,7 +131,7 @@ Each package has its own `.env.example` with localhost defaults for this mode.
 │   └── admin/          Next.js admin (garments CRUD, sessions, jobs, stats)
 ├── services/
 │   ├── api/            FastAPI + SQLAlchemy + Alembic + pgvector
-│   └── worker/         Redis consumer + try-on providers
+│   └── worker/         RQ worker + try-on providers (mock, fashn)
 ├── infra/
 │   ├── docker-compose.yml
 │   └── postgres/init.sql   (CREATE EXTENSION vector)

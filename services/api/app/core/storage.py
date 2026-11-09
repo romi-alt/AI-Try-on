@@ -1,11 +1,12 @@
 """S3-compatible object storage (MinIO locally, Cloudflare R2 in production)."""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 
 import boto3
 from botocore.config import Config as BotoConfig
+from botocore.exceptions import ClientError
 
 from app.core.config import settings
 
@@ -63,8 +64,73 @@ def put_bytes(key: str, data: bytes, content_type: str) -> None:
 
 
 def object_exists(key: str) -> bool:
+    """False only when the object is definitely absent; storage outages raise."""
     try:
         internal_client().head_object(Bucket=settings.s3_bucket, Key=key)
         return True
-    except Exception:
+    except ClientError as e:
+        if e.response["Error"]["Code"] in ("404", "NoSuchKey", "NotFound"):
+            return False
+        raise
+
+
+# --- captures ----------------------------------------------------------------------------------
+
+CAPTURE_PREFIX = "captures/"
+DELETE_BATCH_SIZE = 1000  # S3 DeleteObjects accepts at most 1000 keys per call
+
+
+def capture_key(session_id: uuid.UUID | str) -> str:
+    return f"{CAPTURE_PREFIX}{session_id}/{uuid.uuid4()}.webp"
+
+
+def capture_key_belongs_to(key: str, session_id: uuid.UUID | str) -> bool:
+    """True for `captures/{session_id}/{uuid}.webp`; blocks using another session's photo."""
+    prefix = f"{CAPTURE_PREFIX}{session_id}/"
+    if not key.startswith(prefix) or not key.endswith(".webp"):
         return False
+    stem = key[len(prefix) : -len(".webp")]
+    try:
+        uuid.UUID(stem)
+    except ValueError:
+        return False
+    return True
+
+
+def put_capture(key: str, data: bytes, session_id: uuid.UUID | str) -> None:
+    expires_at = datetime.now(UTC) + timedelta(seconds=settings.capture_ttl_seconds)
+    internal_client().put_object(
+        Bucket=settings.s3_bucket,
+        Key=key,
+        Body=data,
+        ContentType="image/webp",
+        CacheControl="private, no-store",
+        Metadata={"session-id": str(session_id), "expires-at": expires_at.isoformat(timespec="seconds")},
+    )
+
+
+def delete_captures_older_than(cutoff: datetime) -> int:
+    """Delete every object under `captures/` last modified before `cutoff`. Returns the count."""
+    client = internal_client()
+    deleted = 0
+    batch: list[dict] = []
+
+    def flush() -> int:
+        if not batch:
+            return 0
+        resp = client.delete_objects(
+            Bucket=settings.s3_bucket, Delete={"Objects": list(batch), "Quiet": True}
+        )
+        n = len(batch) - len(resp.get("Errors", []))
+        batch.clear()
+        return n
+
+    for page in client.get_paginator("list_objects_v2").paginate(
+        Bucket=settings.s3_bucket, Prefix=CAPTURE_PREFIX
+    ):
+        for obj in page.get("Contents", []):
+            if obj["LastModified"] < cutoff:
+                batch.append({"Key": obj["Key"]})
+                if len(batch) >= DELETE_BATCH_SIZE:
+                    deleted += flush()
+    return deleted + flush()

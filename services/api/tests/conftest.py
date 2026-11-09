@@ -6,15 +6,19 @@ so nothing leaks into the dev database and tests can run alongside seeded data. 
 `get_async_db` dependency is overridden to use that same transaction.
 """
 
+import socket
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
 
+import boto3
 import httpx
 import pytest
+import redis
 from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.core import storage
 from app.core.config import settings
 from app.core.db import get_async_db
 from app.main import app
@@ -70,3 +74,65 @@ async def plain_api() -> AsyncGenerator[httpx.AsyncClient, None]:
 def token() -> str:
     """Unique string to put in product names so tests can isolate their rows from seed data."""
     return "zz" + uuid.uuid4().hex[:10]
+
+
+# --- S3-compatible storage (moto server) ------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def s3_server() -> Generator[str, None, None]:
+    """A real S3 HTTP server in a thread, so boto3 and presigned URLs behave as against MinIO/R2."""
+    from moto.server import ThreadedMotoServer
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    server = ThreadedMotoServer(ip_address="127.0.0.1", port=port, verbose=False)
+    server.start()
+    yield f"http://127.0.0.1:{port}"
+    server.stop()
+
+
+@pytest.fixture
+def s3(s3_server: str, monkeypatch: pytest.MonkeyPatch):
+    """Point the app at a fresh empty bucket on the moto server. Returns a boto3 client."""
+    bucket = f"test-{uuid.uuid4().hex[:12]}"
+    for name, value in {
+        "s3_endpoint_url": s3_server,
+        "s3_presign_endpoint_url": s3_server,
+        "s3_bucket": bucket,
+        "s3_access_key_id": "test",
+        "s3_secret_access_key": "test",
+    }.items():
+        monkeypatch.setattr(settings, name, value)
+    storage.internal_client.cache_clear()
+    storage.presign_client.cache_clear()
+    client = boto3.client(
+        "s3",
+        endpoint_url=s3_server,
+        region_name="us-east-1",  # moto rejects CreateBucket under R2's "auto"; the app still uses "auto"
+        aws_access_key_id="test",
+        aws_secret_access_key="test",
+    )
+    client.create_bucket(Bucket=bucket)
+    yield client
+    storage.internal_client.cache_clear()
+    storage.presign_client.cache_clear()
+
+
+# --- Redis / RQ -------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def rq_queue(monkeypatch: pytest.MonkeyPatch):
+    """A uniquely named RQ queue on the real Redis, emptied afterwards. Skips without Redis."""
+    try:
+        redis.Redis.from_url(settings.redis_url, socket_connect_timeout=1).ping()
+    except redis.RedisError:
+        pytest.skip("Redis not reachable")
+    from app.services.queue import get_queue
+
+    monkeypatch.setattr(settings, "tryon_queue_name", f"test-{uuid.uuid4().hex[:10]}")
+    queue = get_queue()
+    yield queue
+    queue.empty()

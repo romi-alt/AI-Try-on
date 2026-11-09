@@ -69,8 +69,13 @@ psql: ## Open psql against the dev database
 	$(COMPOSE) exec postgres psql -U $${POSTGRES_USER:-tryon} -d $${POSTGRES_DB:-tryon}
 
 .PHONY: test
-test: ## Run API tests
+test: ## Run API and worker tests (needs the stack up and `make migrate` done)
 	$(API_EXEC) pytest -q
+	$(COMPOSE) exec worker pytest -q
+
+.PHONY: lifecycle
+lifecycle: ## Add the bucket lifecycle rule that expires captures/ after a day (backstop to the 1h sweeper)
+	$(API_EXEC) python -m scripts.apply_lifecycle
 
 .PHONY: lint
 lint: ## Lint all packages
