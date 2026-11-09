@@ -20,7 +20,7 @@ FastAPI backend. Owns the catalog, kiosk sessions, presigned uploads and try-on 
 | GET    | `/tryon/{id}`                | –      | Job row from Postgres: status, progress, result URL or error |
 | GET    | `/jobs/{id}`                 | –      | Latest job state from Redis (falls back to Postgres): the polling fallback and reconnect read |
 | WS     | `/ws?session={id}`           | –      | Live job events for one session (see Real-time updates) |
-| POST   | `/uploads/presign`           | –      | Presigned PUT URL for admin garment images   |
+| POST   | `/uploads/presign`           | admin  | Presigned PUT URL for admin garment images   |
 | GET    | `/tryon`                     | admin  | Recent jobs                                  |
 | GET    | `/admin/stats`               | admin  | Dashboard counters                           |
 

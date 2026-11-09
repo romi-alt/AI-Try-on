@@ -1,15 +1,16 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.core.auth import require_admin
 from app.core.config import settings
 from app.core.storage import build_key, presigned_put, public_url
 from app.schemas.upload import PresignRequest, PresignResponse
 
-router = APIRouter(prefix="/uploads", tags=["uploads"])
+router = APIRouter(prefix="/uploads", tags=["uploads"], dependencies=[Depends(require_admin)])
 
 
 @router.post("/presign", response_model=PresignResponse)
 def presign(payload: PresignRequest):
-    """Hand the browser a short-lived PUT URL so image bytes never transit the API."""
+    """Hand the admin app a short-lived PUT URL so image bytes never transit the API. Admin only."""
     key = build_key(payload.kind, payload.content_type)
     return PresignResponse(
         key=key,
