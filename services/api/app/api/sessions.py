@@ -1,7 +1,4 @@
-import uuid
-from datetime import UTC, datetime
-
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -15,22 +12,10 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 @router.post("", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
 def create_session(payload: SessionCreate, db: Session = Depends(get_db)):
-    session = KioskSession(kiosk_id=payload.kiosk_id)
+    session = KioskSession(consent_given=payload.consent_given)
     db.add(session)
     db.commit()
     db.refresh(session)
-    return session
-
-
-@router.post("/{session_id}/end", response_model=SessionOut)
-def end_session(session_id: uuid.UUID, db: Session = Depends(get_db)):
-    session = db.get(KioskSession, session_id)
-    if not session:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
-    if session.ended_at is None:
-        session.ended_at = datetime.now(UTC)
-        db.commit()
-        db.refresh(session)
     return session
 
 

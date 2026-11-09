@@ -3,7 +3,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import admin, garments, health, sessions, tryon, uploads
+from app.api import admin, health, products, sessions, tryon, uploads
 from app.core.config import settings
 
 logging.basicConfig(level=settings.log_level)
@@ -23,7 +23,7 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
-app.include_router(garments.router)
+app.include_router(products.router)
 app.include_router(sessions.router)
 app.include_router(uploads.router)
 app.include_router(tryon.router)

@@ -13,7 +13,7 @@ infra           docker-compose: Postgres + pgvector, Redis, MinIO (local R2)
 
 ## How a try-on flows
 
-1. Kiosk starts a **session** (`POST /sessions`) and loads active **garments**.
+1. Kiosk starts a **session** (`POST /sessions`) and loads the **product** catalog.
 2. Shopper picks a garment and taps *Try it on*. The kiosk grabs a webcam frame.
 3. Kiosk asks the API for a **presigned PUT URL** and uploads the JPEG straight to
    object storage (MinIO locally, Cloudflare R2 in prod). Image bytes never pass
@@ -25,7 +25,7 @@ infra           docker-compose: Postgres + pgvector, Redis, MinIO (local R2)
    result image to storage and marks the job done.
 6. Kiosk polls `GET /tryon/{id}` and shows the result.
 
-Garments carry a 512-d pgvector embedding; `GET /garments/{id}/similar` returns
+Products carry a 512-d pgvector embedding; `GET /products/{id}/similar` returns
 nearest neighbours for "you might also like" shelves.
 
 ## Prerequisites
@@ -45,7 +45,7 @@ In a second terminal, once `api` is up:
 
 ```bash
 make migrate    # alembic upgrade head
-make seed       # 10 demo garments + placeholder images in the bucket
+make seed       # 20 demo products + placeholder images/masks in the bucket
 ```
 
 Then open:
@@ -67,7 +67,7 @@ The browser will ask for camera permission on the kiosk's try-on screen.
 | `make dev-infra`  | Start only Postgres, Redis, MinIO (run apps natively)         |
 | `make migrate`    | Run Alembic migrations                                        |
 | `make migration m="..."` | Autogenerate a migration from model changes            |
-| `make seed`       | Seed demo garments                                            |
+| `make seed`       | Seed 20 demo products (idempotent)                            |
 | `make test`       | Run API tests                                                 |
 | `make lint`       | ESLint + Ruff across all packages                             |
 | `make logs` / `make ps` | Tail logs / list services                               |

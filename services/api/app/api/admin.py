@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import require_admin
 from app.core.db import get_db
-from app.models import Garment, JobStatus, KioskSession, TryOnJob
+from app.models import JobStatus, KioskSession, Product, TryOnJob
 from app.schemas.admin import StatsOut
 from app.services.queue import queue_depth
 
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(requir
 def stats(db: Session = Depends(get_db)):
     start_of_day = datetime.combine(datetime.now(UTC).date(), time.min, tzinfo=UTC)
 
-    garments_active = db.scalar(select(func.count()).select_from(Garment).where(Garment.is_active.is_(True)))
+    products_in_stock = db.scalar(select(func.count()).select_from(Product).where(Product.stock > 0))
     sessions_today = db.scalar(
         select(func.count()).select_from(KioskSession).where(KioskSession.started_at >= start_of_day)
     )
@@ -36,7 +36,7 @@ def stats(db: Session = Depends(get_db)):
         depth = -1
 
     return StatsOut(
-        garments_active=garments_active or 0,
+        products_in_stock=products_in_stock or 0,
         sessions_today=sessions_today or 0,
         jobs_today=jobs_today or 0,
         jobs_failed_today=jobs_failed_today or 0,

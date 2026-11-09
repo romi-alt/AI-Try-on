@@ -57,7 +57,7 @@ migration: ## Autogenerate a new Alembic migration: make migration m="add foo"
 	$(API_EXEC) alembic revision --autogenerate -m "$(m)"
 
 .PHONY: seed
-seed: ## Seed the database and bucket with demo garments
+seed: ## Seed the database and bucket with 20 demo products
 	$(API_EXEC) python -m scripts.seed
 
 .PHONY: api-shell

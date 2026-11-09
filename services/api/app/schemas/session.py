@@ -1,20 +1,19 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 
 class SessionCreate(BaseModel):
-    kiosk_id: str = Field(min_length=1, max_length=120)
+    consent_given: bool = False
 
 
 class SessionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    kiosk_id: str
     started_at: datetime
-    ended_at: datetime | None
+    consent_given: bool
 
 
 class SessionAdminOut(SessionOut):
