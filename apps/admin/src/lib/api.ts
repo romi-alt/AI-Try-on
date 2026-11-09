@@ -5,6 +5,7 @@ import type {
   Category,
   Job,
   Order,
+  OrderStatus,
   PresignResponse,
   Product,
   ProductInput,
@@ -154,12 +155,23 @@ export const api = {
     return checked.public_url;
   },
 
-  /** Recent orders, newest first. `code` finds one by its pickup code (the API ignores case and spaces). */
-  listOrders: ({ code, limit = config.listLimit }: { code?: string; limit?: number } = {}) => {
+  /**
+   * Recent orders, newest first. `code` finds one by its pickup code (the API ignores case and spaces) and `status`
+   * keeps only orders in that state.
+   */
+  listOrders: ({ code, status, limit = config.listLimit }: { code?: string; status?: OrderStatus; limit?: number } = {}) => {
     const q = new URLSearchParams({ limit: String(limit) });
     if (code?.trim()) q.set("code", code.trim());
+    if (status) q.set("status", status);
     return request<Order[]>(`/orders?${q}`);
   },
+
+  /**
+   * Closes a waiting order. Cancelling puts its items back into stock. Asking for the state an order is already in
+   * is harmless; switching a closed order to the other state is a 409.
+   */
+  setOrderStatus: (id: string, status: "collected" | "cancelled") =>
+    request<Order>(`/orders/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
 
   listSessions: (limit: number = config.listLimit) => request<AdminSession[]>(`/sessions?limit=${limit}`),
 

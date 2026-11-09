@@ -122,9 +122,11 @@ follower, the store's async flow, the API client, the photo crop and the idle ti
   `services/api/README.md`). **The bucket must allow CORS PUT from the admin origin** (MinIO does by
   default; for Cloudflare R2 add a CORS rule). Deleting a product that is in a cart is refused by the API, and the
   page suggests setting its stock to 0 instead.
-- **Orders.** The latest orders with their pickup code, items and total, newest first, and a box to find one by its
-  code (case does not matter). Prices are as they were when the order was placed. It is read-only: orders have no
-  status yet, so nothing can be marked collected or cancelled.
+- **Orders.** The latest orders with pickup code, status, items and total, newest first. Filter by All, Waiting,
+  Collected or Cancelled, and find one by its code (case does not matter). A waiting order has *Mark collected*
+  (once the shopper has paid at the counter and taken their items) and *Cancel* (asks first, then puts the items back
+  into stock). Both are final. If someone else already closed the order the other way, the page says so and shows
+  the real state. Prices are as they were when the order was placed.
 - **Sessions.** The latest sessions with their try-on counts.
 - **Try-on jobs.** The latest jobs, refreshed every few seconds, with product names, progress, duration, the
   worker's error for failed ones and, for finished ones, a link to the result. Result links are signed and expire,

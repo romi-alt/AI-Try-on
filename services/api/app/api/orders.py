@@ -10,14 +10,14 @@ import uuid
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import selectinload
 
 from app.api.cart import _require_session
 from app.api.deps import AsyncDb
 from app.core.auth import require_admin
-from app.models import Cart, CartItem, Order, OrderItem, Product
-from app.schemas.order import CheckoutIn, OrderOut
+from app.models import Cart, CartItem, Order, OrderItem, OrderStatus, Product
+from app.schemas.order import CheckoutIn, OrderOut, OrderStatusIn
 
 router = APIRouter(tags=["orders"])
 logger = logging.getLogger("app.orders")
@@ -157,10 +157,68 @@ async def _unused_code(db) -> str:
 async def list_orders(
     db: AsyncDb,
     code: str | None = Query(default=None, max_length=12, description="Find an order by its pickup code"),
+    status_: OrderStatus | None = Query(
+        default=None, alias="status", description="Only orders in this state"
+    ),
     limit: int = Query(default=100, ge=1, le=200),
 ):
     """Recent orders, newest first. Admin only. `code` is matched ignoring case and surrounding spaces."""
     query = select(Order).options(_with_items()).order_by(Order.created_at.desc(), Order.id).limit(limit)
     if code is not None and code.strip():
         query = query.where(Order.pickup_code == code.strip().upper())
+    if status_ is not None:
+        query = query.where(Order.status == status_)
     return (await db.execute(query)).scalars().all()
+
+
+@router.patch("/orders/{order_id}", response_model=OrderOut, dependencies=[Depends(require_admin)])
+async def set_order_status(order_id: uuid.UUID, payload: OrderStatusIn, db: AsyncDb):
+    """Mark a waiting order `collected` or `cancelled`. Admin only.
+
+    Cancelling puts every item back into stock, in the same transaction (a product that has since been deleted
+    is skipped). Both are final: an order that is already closed cannot be changed to the other state (409).
+    Asking for the state an order is already in is a harmless repeat and changes nothing, so a double click or
+    a retry cannot return the stock twice.
+    """
+    # The order row is locked, so two staff members (or a retry) acting on one order happen one at a time.
+    order = (
+        await db.execute(
+            select(Order).options(_with_items()).where(Order.id == order_id).with_for_update(of=Order)
+        )
+    ).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+
+    target = OrderStatus(payload.status)
+    if order.status == target:
+        return order
+    if order.status != OrderStatus.placed:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"This order is already {order.status.value} and cannot be marked {target.value}",
+        )
+
+    if target == OrderStatus.cancelled:
+        back: dict[uuid.UUID, int] = {}
+        for item in order.items:
+            back[item.product_id] = back.get(item.product_id, 0) + item.quantity
+        # Same lock order as checkout (by product id), so a cancel and a checkout cannot deadlock.
+        products = (
+            await db.execute(
+                select(Product).where(Product.id.in_(sorted(back))).order_by(Product.id).with_for_update()
+            )
+        ).scalars()
+        for product in products:
+            product.stock += back[product.id]
+
+    order.status = target
+    order.status_changed_at = func.now()
+    await db.commit()
+
+    logger.info("order_status_changed", extra={"order_id": str(order_id), "status": target.value})
+    return await db.scalar(
+        select(Order)
+        .options(_with_items())
+        .where(Order.id == order_id)
+        .execution_options(populate_existing=True)
+    )

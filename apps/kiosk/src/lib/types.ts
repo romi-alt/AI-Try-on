@@ -90,8 +90,10 @@ export type Order = {
   id: string;
   session_id: string | null;
   pickup_code: string;
+  status: "placed" | "collected" | "cancelled";
   item_count: number;
   subtotal_pkr: number;
   created_at: string;
+  status_changed_at: string | null;
   items: OrderItem[];
 };

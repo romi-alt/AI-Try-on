@@ -1,7 +1,10 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
+
+from app.models.order import OrderStatus
 
 
 class CheckoutIn(BaseModel):
@@ -30,7 +33,14 @@ class OrderOut(BaseModel):
     id: uuid.UUID
     session_id: uuid.UUID | None
     pickup_code: str
+    status: OrderStatus
     item_count: int
     subtotal_pkr: int
     created_at: datetime
+    status_changed_at: datetime | None
     items: list[OrderItemOut]
+
+
+class OrderStatusIn(BaseModel):
+    # An order starts as "placed"; staff can only close it, one way or the other.
+    status: Literal["collected", "cancelled"]

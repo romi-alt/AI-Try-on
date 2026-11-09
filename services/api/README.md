@@ -18,7 +18,8 @@ FastAPI backend. Owns the catalog, kiosk sessions, presigned uploads and try-on 
 | PATCH  | `/cart/{session_id}/items/{item_id}` | – | Set one cart line's quantity (`{"quantity": 1..99}`); returns the cart. 409 if there is not enough stock, 404 if the line is not in this session's cart |
 | DELETE | `/cart/{session_id}/items/{item_id}` | – | Remove one cart line (all its quantity); returns the cart. 404 if the line is not in this session's cart or is already gone |
 | POST   | `/checkout`                  | –      | Turn the session's cart into an order (pay at the counter); 201 with a pickup code, 409 if the cart is empty or stock is short. Resending the same `idempotency_key` returns the order already placed (200) |
-| GET    | `/orders`                    | admin  | Recent orders, newest first; `code` finds one by its pickup code |
+| GET    | `/orders`                    | admin  | Recent orders, newest first; `code` finds one by its pickup code, `status` (`placed`, `collected`, `cancelled`) keeps one state |
+| PATCH  | `/orders/{id}`               | admin  | `{"status": "collected" \| "cancelled"}`: close a waiting order. Cancelling returns its items to stock |
 | POST   | `/capture`                   | –      | Upload a webcam photo (multipart `file` + `session_id`); returns its storage key |
 | POST   | `/tryon`                     | –      | Queue a try-on for 1–5 `product_ids`; returns `job_id` immediately (202) |
 | GET    | `/tryon/{id}`                | –      | Job row from Postgres: status, progress, result URL or error |
@@ -69,8 +70,14 @@ cannot be misread, for example no 0/O or 1/I). Nothing about a card or a custome
   unknown.
 - **Stock is taken at checkout, not at add-to-cart.** Several shoppers can still hold the last item in their carts;
   the first to check out gets it and the others are told it is sold out.
-- **No order management yet.** Orders have no status, so there is no way to mark one collected or cancel it (and
-  cancelling would need to put stock back). `GET /orders` is read-only.
+- **Order status.** An order starts `placed` (waiting for the shopper to pay and collect). Staff close it with
+  `PATCH /orders/{id}` as `collected` (paid for and handed over; stock is untouched) or `cancelled` (not going
+  ahead). **Cancelling puts every item back into stock** in the same transaction, locking the products in the same
+  order as checkout; an item whose product has since been deleted is skipped, and the quantity is added to whatever
+  the stock is now. Both are final: closing an order the other way is a 409 naming its current state. Asking for the
+  state it is already in is a harmless repeat (200, nothing changes), so a double click or a retry cannot return the
+  stock twice. The order row is locked, so two people acting on one order happen one at a time. `status_changed_at`
+  records when. There is no un-cancel and no refund or payment record, because nothing is paid through this app.
 
 ## Garment image uploads
 
@@ -189,7 +196,7 @@ Migrations live in `alembic/versions/` (`make migrate`; `make migration m="..."`
 | `tryon_jobs` | `session_id`, `product_ids uuid[]` (at least one, not a FK so history survives catalog edits), `status` enum, `progress` 0-100, `person_image_key`, `result_url`, `error`, `created_at`, `updated_at` |
 | `carts`      | one per session                                                                         |
 | `cart_items` | `cart_id`, `product_id` (RESTRICT delete), optional `size` / `color`, `quantity > 0`    |
-| `orders`     | `pickup_code` (unique), `item_count`, `subtotal_pkr`, `session_id` (SET NULL), `idempotency_key` (unique per session) |
+| `orders`     | `pickup_code` (unique), `status` enum (`placed`, `collected`, `cancelled`) and `status_changed_at`, `item_count`, `subtotal_pkr`, `session_id` (SET NULL), `idempotency_key` (unique per session) |
 | `order_items`| copied `product_name`, `garment_image_url`, `size`, `color`, `quantity`, `unit_price_pkr`, `line_total_pkr`; `product_id` is not a foreign key |
 
 Seed: `make seed` creates 20 products with generated placeholder images and masks. Pass

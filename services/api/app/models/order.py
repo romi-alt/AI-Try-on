@@ -1,3 +1,4 @@
+import enum
 import uuid
 from datetime import datetime
 
@@ -5,6 +6,7 @@ from sqlalchemy import (
     BigInteger,
     CheckConstraint,
     DateTime,
+    Enum,
     ForeignKey,
     Index,
     Integer,
@@ -19,6 +21,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.db import Base
 
 
+class OrderStatus(enum.StrEnum):
+    placed = "placed"  # waiting to be paid for and collected at the counter
+    collected = "collected"  # paid for and handed over
+    cancelled = "cancelled"  # not going ahead; its items went back into stock
+
+
 class Order(Base):
     """A placed order: the cart as it was at checkout, with prices copied so catalog edits cannot alter it."""
 
@@ -29,6 +37,7 @@ class Order(Base):
         UniqueConstraint("session_id", "idempotency_key", name="uq_orders_session_idempotency_key"),
         CheckConstraint("subtotal_pkr >= 0", name="ck_orders_subtotal_nonneg"),
         Index("ix_orders_created_at", "created_at"),
+        Index("ix_orders_status_created_at", "status", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -40,7 +49,15 @@ class Order(Base):
     pickup_code: Mapped[str] = mapped_column(String(12), nullable=False)
     item_count: Mapped[int] = mapped_column(Integer, nullable=False)
     subtotal_pkr: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[OrderStatus] = mapped_column(
+        Enum(OrderStatus, name="order_status", values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+        default=OrderStatus.placed,
+        server_default=OrderStatus.placed.value,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # When it was last collected or cancelled; null while it is still waiting.
+    status_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     items = relationship(
         "OrderItem", back_populates="order", cascade="all, delete-orphan", order_by="OrderItem.position"

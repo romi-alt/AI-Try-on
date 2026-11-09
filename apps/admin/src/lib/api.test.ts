@@ -190,7 +190,7 @@ describe("uploadImage", () => {
 });
 
 describe("listOrders", () => {
-  const order = { id: "o1", session_id: null, pickup_code: "K7TQ4M", item_count: 1, subtotal_pkr: 500, created_at: "2026-01-01T00:00:00Z", items: [] };
+  const order = { id: "o1", session_id: null, pickup_code: "K7TQ4M", status: "placed", status_changed_at: null, item_count: 1, subtotal_pkr: 500, created_at: "2026-01-01T00:00:00Z", items: [] };
 
   it("asks for the latest orders with the admin key", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json([order]));
@@ -212,5 +212,34 @@ describe("listOrders", () => {
   it("says how to fix a missing admin key", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ detail: "Invalid admin key" }, 401));
     await expect(api.listOrders()).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("filters by status", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => json([]));
+    await api.listOrders({ status: "placed" });
+    await api.listOrders();
+    expect(String(fetch.mock.calls[0][0])).toContain("status=placed");
+    expect(String(fetch.mock.calls[1][0])).not.toContain("status=");
+  });
+});
+
+describe("setOrderStatus", () => {
+  it("PATCHes the order with the admin key", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ id: "o1", status: "cancelled" }));
+    const res = await api.setOrderStatus("o1", "cancelled");
+    expect(res).toMatchObject({ status: "cancelled" });
+    const [url, init] = fetch.mock.calls[0];
+    expect(String(url)).toMatch(/\/orders\/o1$/);
+    expect(init?.method).toBe("PATCH");
+    expect(JSON.parse(String(init?.body))).toEqual({ status: "cancelled" });
+    expect(new Headers(init?.headers).has("X-Admin-Key")).toBe(true);
+  });
+
+  it("shows the API's reason when the order is already closed the other way", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ detail: "This order is already collected and cannot be marked cancelled" }, 409));
+    await expect(api.setOrderStatus("o1", "cancelled")).rejects.toMatchObject({
+      status: 409,
+      message: "This order is already collected and cannot be marked cancelled",
+    });
   });
 });

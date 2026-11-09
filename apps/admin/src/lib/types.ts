@@ -85,12 +85,15 @@ export type OrderItem = {
   unit_price_pkr: number;
   line_total_pkr: number;
 };
+export type OrderStatus = "placed" | "collected" | "cancelled";
 export type Order = {
   id: string;
   session_id: string | null;
   pickup_code: string;
+  status: OrderStatus;
   item_count: number;
   subtotal_pkr: number;
   created_at: string;
+  status_changed_at: string | null;
   items: OrderItem[];
 };
