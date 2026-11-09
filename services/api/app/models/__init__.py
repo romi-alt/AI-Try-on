@@ -1,6 +1,6 @@
 from app.models.cart import Cart, CartItem
 from app.models.order import Order, OrderItem, OrderStatus, PaymentStatus
-from app.models.product import Product, ProductCategory
+from app.models.product import ProcessingStatus, Product, ProductCategory
 from app.models.session import KioskSession
 from app.models.share import ShareLink
 from app.models.staff_request import StaffRequest, StaffRequestStatus
@@ -15,6 +15,7 @@ __all__ = [
     "OrderItem",
     "OrderStatus",
     "PaymentStatus",
+    "ProcessingStatus",
     "Product",
     "ProductCategory",
     "ShareLink",

@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     # RQ queue the worker consumes. Must match the worker's TRYON_QUEUE_NAME.
     tryon_queue_name: str = "tryon"
     tryon_job_timeout_seconds: int = 300
+    # Asset jobs (background removal, embeddings) use their own queue and worker so they never delay a try-on.
+    # Must match the worker's ASSETS_QUEUE_NAME.
+    assets_queue_name: str = "assets"
+    assets_job_timeout_seconds: int = 900
     # How long the latest state of a job (Redis hash `job:{id}`) is kept after its last update.
     job_state_ttl_seconds: int = 24 * 3600
 

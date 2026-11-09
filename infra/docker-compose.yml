@@ -126,6 +126,24 @@ services:
       minio-init:
         condition: service_completed_successfully
 
+  # Heavy model work (FashionCLIP embeddings, background removal, SAM 2 masks) on its own queue and worker, so it
+  # never delays a shopper's try-on. The first build downloads several GB of model weights.
+  assets-worker:
+    build:
+      context: ../services/worker
+      dockerfile: Dockerfile.assets
+    environment:
+      <<: *common-env
+      WORKER_QUEUES: assets
+    command: python -m worker.main
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
   kiosk:
     build:
       context: ..

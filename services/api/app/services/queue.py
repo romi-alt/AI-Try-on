@@ -42,5 +42,41 @@ def enqueue_tryon(job_id: uuid.UUID, session_id: uuid.UUID) -> None:
     )
 
 
+PROCESS_GARMENT_FUNCTION = "worker.asset_tasks.process_garment_job"
+EMBED_PRODUCTS_FUNCTION = "worker.asset_tasks.embed_products_job"
+ASSET_RESULT_TTL_SECONDS = 3600
+
+
+def get_assets_queue() -> Queue:
+    return Queue(settings.assets_queue_name, connection=get_rq_redis(), serializer=JSONSerializer)
+
+
+def enqueue_process_garment(product_id: uuid.UUID, *, reembed: bool = True) -> str:
+    """Queue background removal + mask generation (+ a fresh embedding) for one product. Returns the RQ
+    job id."""
+    job = get_assets_queue().enqueue(
+        PROCESS_GARMENT_FUNCTION,
+        str(product_id),
+        reembed,
+        job_timeout=settings.assets_job_timeout_seconds,
+        result_ttl=ASSET_RESULT_TTL_SECONDS,
+        failure_ttl=FAILED_JOB_RETENTION_SECONDS,
+    )
+    return job.id
+
+
+def enqueue_embeddings(product_ids: list[uuid.UUID] | None, *, only_missing: bool = False) -> str:
+    """Queue (re)computing FashionCLIP embeddings: for `product_ids`, or the whole catalog when None."""
+    job = get_assets_queue().enqueue(
+        EMBED_PRODUCTS_FUNCTION,
+        [str(p) for p in product_ids] if product_ids else None,
+        only_missing,
+        job_timeout=settings.assets_job_timeout_seconds,
+        result_ttl=ASSET_RESULT_TTL_SECONDS,
+        failure_ttl=FAILED_JOB_RETENTION_SECONDS,
+    )
+    return job.id
+
+
 def queue_depth() -> int:
     return len(get_queue())

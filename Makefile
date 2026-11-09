@@ -69,6 +69,9 @@ psql: ## Open psql against the dev database
 	$(COMPOSE) exec postgres psql -U $${POSTGRES_USER:-tryon} -d $${POSTGRES_DB:-tryon}
 
 .PHONY: test
+embed: ## Compute FashionCLIP embeddings for products that have none (needs the stack up; first run downloads the model)
+	$(COMPOSE) exec assets-worker python -m worker.embed_products --missing
+
 test: ## Run API and worker tests (needs the stack up and `make migrate` done)
 	$(API_EXEC) pytest -q
 	$(COMPOSE) exec worker pytest -q

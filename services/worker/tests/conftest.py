@@ -70,11 +70,20 @@ def pg(monkeypatch: pytest.MonkeyPatch):
     schema = f"t_{uuid.uuid4().hex[:10]}"
     with base.begin() as conn:
         conn.execute(text(f"CREATE SCHEMA {schema}"))
-    engine = create_engine(settings.database_url, connect_args={"options": f"-csearch_path={schema}"})
+    # `public` stays on the path so pgvector's type and operators resolve, as in a real deployment.
+    engine = create_engine(settings.database_url, connect_args={"options": f"-csearch_path={schema},public"})
     with engine.begin() as conn:
-        for name, values in (("job_status", db.JOB_STATUSES), ("product_category", db.PRODUCT_CATEGORIES)):
-            conn.execute(text(f"CREATE TYPE {name} AS ENUM ({', '.join(repr(v) for v in values)})"))
-    db.metadata.create_all(engine)
+        for name, values in (
+            ("job_status", db.JOB_STATUSES),
+            ("product_category", db.PRODUCT_CATEGORIES),
+            ("processing_status", db.PROCESSING_STATUSES),
+        ):
+            conn.execute(text(f"CREATE TYPE {schema}.{name} AS ENUM ({', '.join(repr(v) for v in values)})"))
+    db.metadata.create_all(engine, checkfirst=False)  # a checkfirst would see the real tables in `public`
+    with (
+        engine.begin() as conn
+    ):  # declared in SQL, not in the Table: the worker never needs the pgvector package
+        conn.execute(text(f"ALTER TABLE {schema}.products ADD COLUMN embedding vector(512)"))
     monkeypatch.setattr(db, "engine", engine)
     yield engine
     engine.dispose()

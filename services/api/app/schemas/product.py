@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.models.product import ProductCategory
+from app.models.product import ProcessingStatus, ProductCategory
 
 
 class ColorOption(BaseModel):
@@ -12,6 +12,7 @@ class ColorOption(BaseModel):
 
 
 class ProductBase(BaseModel):
+    sku: str | None = Field(default=None, min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=200)
     category: ProductCategory
     price_pkr: int = Field(ge=0)
@@ -34,6 +35,7 @@ class ProductCreate(ProductBase):
 
 
 class ProductUpdate(BaseModel):
+    sku: str | None = Field(default=None, min_length=1, max_length=64)
     name: str | None = Field(default=None, min_length=1, max_length=200)
     category: ProductCategory | None = None
     price_pkr: int | None = Field(default=None, ge=0)
@@ -52,9 +54,27 @@ class ProductOut(ProductBase):
     created_at: datetime
     on_sale: bool
     current_price_pkr: int
+    garment_original_url: str | None = None
+    has_embedding: bool = False
+    embedding_updated_at: datetime | None = None
+    processing_status: ProcessingStatus = ProcessingStatus.idle
+    processing_error: str | None = None
+    processing_updated_at: datetime | None = None
 
 
 class SimilarProductOut(ProductOut):
     # Cosine distance to the reference item; None when no embedding is available and the item is a plain
     # fallback.
     distance: float | None
+
+
+class AssetJobAccepted(BaseModel):
+    job_id: str = Field(description="RQ job id on the assets queue")
+    products: int = Field(description="How many products the job covers (0 means the whole catalog)")
+
+
+class EmbeddingRequest(BaseModel):
+    product_ids: list[uuid.UUID] | None = Field(
+        default=None, max_length=500, description="Products to embed; omit for the whole catalog"
+    )
+    only_missing: bool = Field(default=False, description="Skip products that already have an embedding")

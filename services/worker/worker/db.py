@@ -19,6 +19,7 @@ from sqlalchemy import (
     Table,
     Text,
     create_engine,
+    func,
     select,
     text,
     update,
@@ -60,6 +61,11 @@ tryon_jobs = Table(
     Column("created_at", DateTime(timezone=True)),
     Column("updated_at", DateTime(timezone=True)),
 )
+PROCESSING_STATUSES = ("idle", "queued", "processing", "done", "failed")
+processing_status = ENUM(*PROCESSING_STATUSES, name="processing_status", create_type=False)
+
+# The `embedding vector(512)` column is written with raw SQL (see `set_embedding`), so the worker does not
+# need the pgvector package just to declare it.
 products = Table(
     "products",
     metadata,
@@ -68,6 +74,12 @@ products = Table(
     Column("category", product_category, nullable=False),
     Column("garment_image_url", Text, nullable=False),
     Column("garment_mask_url", Text),
+    Column("garment_original_url", Text),
+    Column("embedding_updated_at", DateTime(timezone=True)),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
+    Column("processing_status", processing_status, nullable=False, server_default="idle"),
+    Column("processing_error", Text),
+    Column("processing_updated_at", DateTime(timezone=True)),
 )
 
 
@@ -177,3 +189,82 @@ def fail_stale_processing(older_than: timedelta, error: str) -> list[tuple[uuid.
 def ping() -> None:
     with engine.connect() as conn:
         conn.execute(text("SELECT 1"))
+
+
+# --- product assets (embeddings, background removal) -----------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ProductImageRow:
+    id: uuid.UUID
+    name: str
+    garment_image_url: str
+    garment_original_url: str | None
+    has_embedding: bool
+
+
+def list_product_images(
+    product_ids: list[uuid.UUID] | None = None, *, only_missing: bool = False
+) -> list[ProductImageRow]:
+    """Products to embed or process, in a stable order. `only_missing` keeps those with no embedding yet."""
+    query = """
+        SELECT id, name, garment_image_url, garment_original_url, embedding IS NOT NULL AS has_embedding
+        FROM products
+        WHERE (CAST(:ids AS uuid[]) IS NULL OR id = ANY(CAST(:ids AS uuid[])))
+          AND (NOT :only_missing OR embedding IS NULL)
+        ORDER BY created_at, id
+    """
+    with engine.connect() as conn:
+        rows = conn.execute(text(query), {"ids": product_ids, "only_missing": only_missing}).all()
+    return [
+        ProductImageRow(r.id, r.name, r.garment_image_url, r.garment_original_url, r.has_embedding)
+        for r in rows
+    ]
+
+
+def set_embedding(product_id: uuid.UUID, vector: list[float]) -> bool:
+    """Store a product's embedding. False if the product no longer exists."""
+    literal = "[" + ",".join(f"{x:.8f}" for x in vector) + "]"
+    stmt = text(
+        "UPDATE products SET embedding = CAST(:v AS vector), embedding_updated_at = now() WHERE id = :id"
+    )
+    with engine.begin() as conn:
+        return conn.execute(stmt, {"v": literal, "id": product_id}).rowcount == 1
+
+
+def claim_processing(product_id: uuid.UUID) -> bool:
+    """queued -> processing. False if another worker took it, it was never queued, or the product is gone."""
+    stmt = (
+        update(products)
+        .where(products.c.id == product_id, products.c.processing_status == "queued")
+        .values(processing_status="processing", processing_error=None, processing_updated_at=_now())
+    )
+    with engine.begin() as conn:
+        return conn.execute(stmt).rowcount == 1
+
+
+def finish_processing(product_id: uuid.UUID, *, image_url: str, mask_url: str, original_url: str) -> None:
+    stmt = (
+        update(products)
+        .where(products.c.id == product_id)
+        .values(
+            garment_image_url=image_url,
+            garment_mask_url=mask_url,
+            garment_original_url=original_url,
+            processing_status="done",
+            processing_error=None,
+            processing_updated_at=_now(),
+        )
+    )
+    with engine.begin() as conn:
+        conn.execute(stmt)
+
+
+def fail_processing(product_id: uuid.UUID, message: str) -> None:
+    stmt = (
+        update(products)
+        .where(products.c.id == product_id)
+        .values(processing_status="failed", processing_error=message[:1000], processing_updated_at=_now())
+    )
+    with engine.begin() as conn:
+        conn.execute(stmt)

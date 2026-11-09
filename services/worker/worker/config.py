@@ -28,6 +28,25 @@ class Settings(BaseSettings):
     s3_public_base_url: str = "http://localhost:9000/tryon-media"
     result_url_expires_seconds: int = 3600
 
+    # --- asset jobs (embeddings, background removal): a separate queue and worker, so heavy CPU/GPU work
+    # never
+    # delays a shopper's try-on. Must match the API's ASSETS_QUEUE_NAME.
+    assets_queue_name: str = "assets"
+    assets_job_timeout_seconds: int = 900
+    # Which queues this process consumes, comma separated: "tryon" (default) or "assets".
+    worker_queues: str = "tryon"
+
+    # FashionCLIP (CLIP fine-tuned on fashion product images; 512-d image embeddings).
+    fashion_clip_model: str = "patrickjohncyh/fashion-clip"
+    embedding_batch_size: int = 8
+
+    # Background removal (rembg) and mask refinement (SAM 2).
+    rembg_model: str = "isnet-general-use"
+    sam2_checkpoint: str = ""  # path to a SAM 2.1 checkpoint, e.g. sam2.1_hiera_tiny.pt; empty disables SAM 2
+    sam2_config: str = "configs/sam2.1/sam2.1_hiera_t.yaml"
+    garment_max_side: int = 2048  # larger uploads are scaled down before processing
+    models_dir: str = "~/.cache/tryon-models"
+
     # --- provider selection ---
     tryon_provider: Literal["mock", "fashn"] = "mock"
 

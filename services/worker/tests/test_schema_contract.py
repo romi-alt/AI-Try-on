@@ -47,3 +47,21 @@ def test_enum_values_match_the_database(real_db):
     enums = {name: tuple(labels) for name, labels in rows}
     assert enums["job_status"] == db.JOB_STATUSES
     assert enums["product_category"] == db.PRODUCT_CATEGORIES
+
+
+def test_the_embedding_column_the_worker_writes_is_a_512_dimension_vector(real_db):
+    with real_db.connect() as conn:
+        row = conn.exec_driver_sql(
+            "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a "
+            "WHERE a.attrelid = 'products'::regclass AND a.attname = 'embedding'"
+        ).first()
+    assert row is not None and row[0] == "vector(512)"
+
+
+def test_processing_status_values_match_the_database(real_db):
+    with real_db.connect() as conn:
+        labels = conn.exec_driver_sql(
+            "SELECT array_agg(e.enumlabel ORDER BY e.enumsortorder) FROM pg_type t "
+            "JOIN pg_enum e ON e.enumtypid = t.oid WHERE t.typname = 'processing_status'"
+        ).scalar()
+    assert tuple(labels) == db.PROCESSING_STATUSES

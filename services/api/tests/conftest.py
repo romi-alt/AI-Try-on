@@ -152,6 +152,21 @@ def rq_queue(monkeypatch: pytest.MonkeyPatch):
         conn.delete(*created)
 
 
+@pytest.fixture
+def assets_queue(monkeypatch: pytest.MonkeyPatch):
+    """A uniquely named assets queue on the real Redis, emptied afterwards. Skips without Redis."""
+    try:
+        redis.Redis.from_url(settings.redis_url, socket_connect_timeout=1).ping()
+    except redis.RedisError:
+        pytest.skip("Redis not reachable")
+    from app.services.queue import get_assets_queue
+
+    monkeypatch.setattr(settings, "assets_queue_name", f"test-assets-{uuid.uuid4().hex[:10]}")
+    queue = get_assets_queue()
+    yield queue
+    queue.empty()
+
+
 # --- live server + Redis for WebSocket tests ----------------------------------------------------------
 
 

@@ -16,7 +16,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Heavy model dependencies for the `assets` worker only (FashionCLIP embeddings, rembg, SAM 2). The try-on worker
+# does not need them. SAM 2 must be installed with `pip install --no-build-isolation sam2` after torch (see
+# Dockerfile.assets), because its build would otherwise download a second copy of PyTorch.
+assets = [
+    "numpy>=1.26",
+    "torch>=2.5",
+    "torchvision>=0.20",
+    "transformers>=4.44",
+    "rembg[cpu]>=2.0.60",
+    "onnxruntime>=1.18",
+]
 dev = [
+    "numpy>=1.26",
     "pytest>=8.3",
     "moto[s3,server]>=5.0,<6",
     "ruff>=0.6",
