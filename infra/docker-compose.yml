@@ -1,0 +1,201 @@
+name: ai-try-on
+
+# Local development stack. Run from repo root via `make dev`
+# (which passes --env-file .env). All values have defaults for first boot.
+
+x-common-env: &common-env
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-tryon}:${POSTGRES_PASSWORD:-tryon_dev_password}@postgres:5432/${POSTGRES_DB:-tryon}
+  REDIS_URL: redis://redis:6379/0
+  S3_ENDPOINT_URL: http://minio:9000
+  S3_REGION: auto
+  S3_BUCKET: ${S3_BUCKET:-tryon-media}
+  S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+  S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin_dev_password}
+  S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-http://localhost:9000/tryon-media}
+  # Presigned URLs are consumed by the browser, so they must point at the host-visible endpoint.
+  S3_PRESIGN_ENDPOINT_URL: http://localhost:${MINIO_PORT:-9000}
+  TRYON_QUEUE_NAME: ${TRYON_QUEUE_NAME:-tryon}
+  LOG_LEVEL: INFO
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tryon}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tryon_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-tryon}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tryon} -d ${POSTGRES_DB:-tryon}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin_dev_password}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: create the bucket and make it publicly readable (dev only).
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin_dev_password}
+      S3_BUCKET: ${S3_BUCKET:-tryon-media}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
+        mc mb --ignore-existing "local/$$S3_BUCKET" &&
+        mc anonymous set download "local/$$S3_BUCKET" &&
+        echo "bucket $$S3_BUCKET ready"
+
+  api:
+    build:
+      context: ../services/api
+    environment:
+      <<: *common-env
+      API_CORS_ORIGINS: http://localhost:${KIOSK_PORT:-3000},http://localhost:${ADMIN_PORT:-3001}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key}
+      STAFF_API_KEY: ${STAFF_API_KEY:-dev-staff-key}
+      NOTIFIER: ${NOTIFIER:-console}
+      WHATSAPP_TOKEN: ${WHATSAPP_TOKEN:-}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_TO: ${WHATSAPP_TO:-}
+      WHATSAPP_TEMPLATE_NAME: ${WHATSAPP_TEMPLATE_NAME:-}
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-stub}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ../services/api:/app
+      # Read-only: tests/test_ws_integration.py imports the worker package to run a real job.
+      - ../services/worker:/worker:ro
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  worker:
+    build:
+      context: ../services/worker
+    environment:
+      <<: *common-env
+      # "mock" (default, offline, 8s), "fashn" (hosted; needs FASHN_API_KEY in .env) or "catvton" (your RunPod
+      # endpoint, see services/catvton; needs RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID in .env)
+      TRYON_PROVIDER: ${TRYON_PROVIDER:-mock}
+      FASHN_API_KEY: ${FASHN_API_KEY:-}
+      RUNPOD_API_KEY: ${RUNPOD_API_KEY:-}
+      RUNPOD_ENDPOINT_ID: ${RUNPOD_ENDPOINT_ID:-}
+      MOCK_DURATION_SECONDS: ${MOCK_DURATION_SECONDS:-8}
+      MOCK_FAIL: ${MOCK_FAIL:-false}
+    volumes:
+      - ../services/worker:/app
+    command: python -m worker.main
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  # Heavy model work (FashionCLIP embeddings, background removal, SAM 2 masks) on its own queue and worker, so it
+  # never delays a shopper's try-on. The first build downloads several GB of model weights.
+  assets-worker:
+    build:
+      context: ../services/worker
+      dockerfile: Dockerfile.assets
+    environment:
+      <<: *common-env
+      WORKER_QUEUES: assets
+    command: python -m worker.main
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  kiosk:
+    build:
+      context: ..
+      dockerfile: apps/kiosk/Dockerfile
+      target: dev
+    environment:
+      # Product and result images come back from the API as full URLs, so no media URL is needed here.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      NEXT_PUBLIC_PUBLIC_URL: ${NEXT_PUBLIC_PUBLIC_URL:-http://localhost:3000}
+      WATCHPACK_POLLING: "true"
+    ports:
+      - "${KIOSK_PORT:-3000}:3000"
+    volumes:
+      - ../apps/kiosk:/repo/apps/kiosk
+      - /repo/apps/kiosk/.next
+      - /repo/node_modules
+    depends_on:
+      - api
+
+  admin:
+    build:
+      context: ..
+      dockerfile: apps/admin/Dockerfile
+      target: dev
+    environment:
+      # Server-side only: the browser never sees the admin key (it talks to the app's own /api/proxy).
+      API_URL: http://api:8000
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key}
+      NEXTAUTH_URL: http://localhost:${ADMIN_PORT:-3001}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-dev-only-change-me-dev-only-change-me}
+      ADMIN_USERS: ${ADMIN_USERS:-}
+      WATCHPACK_POLLING: "true"
+    ports:
+      - "${ADMIN_PORT:-3001}:3000"
+    volumes:
+      - ../apps/admin:/repo/apps/admin
+      - /repo/apps/admin/.next
+      - /repo/node_modules
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

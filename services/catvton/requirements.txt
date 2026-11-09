@@ -1,0 +1,16 @@
+# Installed on top of the PyTorch 2.4 / CUDA 12.1 base image (torch itself comes from the base image).
+# CatVTON's own pins (its requirements.txt) win if they differ: check them when you bump CATVTON_REF.
+runpod>=1.7,<2
+diffusers>=0.29,<0.32
+transformers>=4.41,<5
+accelerate>=0.31,<2
+huggingface-hub>=0.23,<1
+pillow>=10.4,<12
+numpy>=1.26,<2
+opencv-python-headless>=4.9,<5
+scipy>=1.11
+scikit-image>=0.22
+omegaconf>=2.3
+einops>=0.7
+fvcore>=0.1.5
+pycocotools>=2.0.7

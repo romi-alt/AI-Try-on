@@ -1,0 +1,36 @@
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Infra / local data
+infra/data/
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# MediaPipe WASM and model, fetched by apps/kiosk/scripts/fetch-pose-assets.mjs
+apps/kiosk/public/mediapipe/

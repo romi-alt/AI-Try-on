@@ -1,0 +1,388 @@
+import uuid
+
+import pytest
+
+from tests.helpers import make_product, make_session
+
+
+def add(api, session_id, product, **extra):
+    return api.post("/cart/add", json={"session_id": session_id, "product_id": str(product.id), **extra})
+
+
+async def test_add_creates_cart_and_prices_with_the_sale_price(api, adb):
+    p = await make_product(adb, price_pkr=5000, sale_price_pkr=4000, sizes=["S", "M"])
+    sid = await make_session(api)
+
+    r = await add(api, sid, p, size="M", quantity=2)
+
+    assert r.status_code == 200
+    cart = r.json()
+    assert cart["session_id"] == sid and cart["cart_id"]
+    (item,) = cart["items"]
+    assert item["product"]["id"] == str(p.id) and item["product"]["name"] == p.name
+    assert (item["size"], item["color"], item["quantity"]) == ("M", "Ivory", 2)
+    assert item["unit_price_pkr"] == 4000 and item["line_total_pkr"] == 8000
+    assert cart["item_count"] == 2 and cart["subtotal_pkr"] == 8000
+
+
+async def test_adding_the_same_variant_merges_into_one_line(api, adb):
+    p = await make_product(adb, sizes=["S", "M"], stock=10)
+    sid = await make_session(api)
+
+    await add(api, sid, p, size="S", quantity=1)
+    r = await add(api, sid, p, size="S", quantity=3)
+
+    (item,) = r.json()["items"]
+    assert item["quantity"] == 4
+
+
+async def test_different_sizes_or_colors_are_separate_lines(api, adb):
+    p = await make_product(
+        adb,
+        sizes=["S", "M"],
+        colors=[{"name": "Ivory", "hex": "#efe6d2"}, {"name": "Black", "hex": "#000000"}],
+        stock=10,
+    )
+    sid = await make_session(api)
+
+    await add(api, sid, p, size="S", color="Ivory")
+    await add(api, sid, p, size="M", color="Ivory")
+    r = await add(api, sid, p, size="S", color="Black")
+
+    lines = {(i["size"], i["color"]): i["quantity"] for i in r.json()["items"]}
+    assert lines == {("S", "Ivory"): 1, ("M", "Ivory"): 1, ("S", "Black"): 1}
+    assert r.json()["item_count"] == 3
+
+
+async def test_multiple_products_total_up(api, adb):
+    a = await make_product(adb, price_pkr=1000, sizes=["M"])
+    b = await make_product(adb, price_pkr=2500, sale_price_pkr=2000, sizes=["M"])
+    sid = await make_session(api)
+
+    await add(api, sid, a, quantity=2)
+    r = await add(api, sid, b)
+
+    assert r.json()["subtotal_pkr"] == 2 * 1000 + 2000
+    assert len(r.json()["items"]) == 2
+
+
+async def test_single_option_size_and_color_are_filled_in(api, adb):
+    p = await make_product(adb, sizes=["One Size"], colors=[{"name": "Black", "hex": "#000000"}])
+    sid = await make_session(api)
+
+    r = await add(api, sid, p)
+
+    (item,) = r.json()["items"]
+    assert (item["size"], item["color"]) == ("One Size", "Black")
+
+
+async def test_product_without_options_needs_none(api, adb):
+    p = await make_product(adb, sizes=[], colors=[])
+    sid = await make_session(api)
+
+    r = await add(api, sid, p)
+
+    (item,) = r.json()["items"]
+    assert item["size"] is None and item["color"] is None
+
+
+async def test_size_is_required_when_there_is_a_choice(api, adb):
+    p = await make_product(adb, sizes=["S", "M"])
+    sid = await make_session(api)
+
+    r = await add(api, sid, p)
+
+    assert r.status_code == 422 and "size is required" in r.json()["detail"]
+
+
+async def test_unknown_size_or_color_is_rejected(api, adb):
+    p = await make_product(adb, sizes=["S", "M"])
+    sid = await make_session(api)
+
+    bad_size = await add(api, sid, p, size="XXL")
+    bad_color = await add(api, sid, p, size="S", color="Neon")
+
+    assert bad_size.status_code == 422 and "Invalid size" in bad_size.json()["detail"]
+    assert bad_color.status_code == 422 and "Invalid color" in bad_color.json()["detail"]
+    assert (await api.get(f"/cart/{sid}")).json()["items"] == []
+
+
+async def test_stock_limit_is_enforced_across_merges_and_variants(api, adb):
+    p = await make_product(adb, sizes=["S", "M"], stock=3)
+    sid = await make_session(api)
+
+    assert (await add(api, sid, p, size="S", quantity=2)).status_code == 200
+    # 2 already in the cart (any size) + 2 more would exceed stock of 3.
+    over = await add(api, sid, p, size="M", quantity=2)
+    assert over.status_code == 409 and "Only 3 in stock" in over.json()["detail"]
+    assert (await add(api, sid, p, size="M", quantity=1)).status_code == 200
+
+    cart = (await api.get(f"/cart/{sid}")).json()
+    assert cart["item_count"] == 3
+
+
+async def test_out_of_stock_product_cannot_be_added(api, adb):
+    p = await make_product(adb, stock=0, sizes=["M"])
+    sid = await make_session(api)
+
+    r = await add(api, sid, p)
+
+    assert r.status_code == 409 and r.json()["detail"] == "Out of stock"
+
+
+async def test_add_validates_quantity(api, adb):
+    p = await make_product(adb, sizes=["M"])
+    sid = await make_session(api)
+    for qty in (0, -1, 11):
+        assert (await add(api, sid, p, quantity=qty)).status_code == 422, qty
+
+
+async def test_add_with_unknown_session_or_product_is_404(api, adb):
+    p = await make_product(adb, sizes=["M"])
+    sid = await make_session(api)
+
+    no_session = await api.post("/cart/add", json={"session_id": str(uuid.uuid4()), "product_id": str(p.id)})
+    no_product = await api.post("/cart/add", json={"session_id": sid, "product_id": str(uuid.uuid4())})
+
+    assert no_session.status_code == 404 and "Session" in no_session.json()["detail"]
+    assert no_product.status_code == 404 and "Product" in no_product.json()["detail"]
+
+
+async def test_add_rejects_malformed_body(api):
+    assert (await api.post("/cart/add", json={})).status_code == 422
+    assert (await api.post("/cart/add", json={"session_id": "x", "product_id": "y"})).status_code == 422
+
+
+async def test_get_cart_for_a_new_session_is_empty(api):
+    sid = await make_session(api)
+
+    r = await api.get(f"/cart/{sid}")
+
+    assert r.status_code == 200
+    assert r.json() == {"session_id": sid, "cart_id": None, "items": [], "item_count": 0, "subtotal_pkr": 0}
+
+
+async def test_get_cart_returns_what_was_added(api, adb):
+    p = await make_product(adb, price_pkr=1500, sizes=["M"])
+    sid = await make_session(api)
+    added = (await add(api, sid, p, quantity=2)).json()
+
+    r = await api.get(f"/cart/{sid}")
+
+    assert r.status_code == 200
+    assert r.json() == added
+    assert r.json()["subtotal_pkr"] == 3000
+
+
+async def test_carts_are_isolated_per_session(api, adb):
+    p = await make_product(adb, sizes=["M"])
+    s1, s2 = await make_session(api), await make_session(api)
+
+    await add(api, s1, p)
+
+    assert (await api.get(f"/cart/{s1}")).json()["item_count"] == 1
+    assert (await api.get(f"/cart/{s2}")).json()["item_count"] == 0
+
+
+async def test_get_cart_unknown_session_is_404_and_bad_id_is_422(api):
+    assert (await api.get(f"/cart/{uuid.uuid4()}")).status_code == 404
+    assert (await api.get("/cart/not-a-uuid")).status_code == 422
+
+
+async def test_cart_reflects_current_prices(api, adb):
+    p = await make_product(adb, price_pkr=1000, sale_price_pkr=None, sizes=["M"])
+    sid = await make_session(api)
+    await add(api, sid, p)
+
+    p.sale_price_pkr = 700
+    await adb.flush()
+
+    assert (await api.get(f"/cart/{sid}")).json()["subtotal_pkr"] == 700
+
+
+async def test_remove_deletes_the_line_and_returns_the_updated_cart(api, adb):
+    shirt = await make_product(adb, price_pkr=1000, sizes=["S", "M"])
+    hat = await make_product(adb, price_pkr=500, sizes=["M"])
+    sid = await make_session(api)
+    await add(api, sid, shirt, size="S", quantity=3)
+    cart = (await add(api, sid, hat)).json()
+    shirt_line = next(i for i in cart["items"] if i["product"]["id"] == str(shirt.id))
+
+    r = await api.delete(f"/cart/{sid}/items/{shirt_line['id']}")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert [i["product"]["id"] for i in body["items"]] == [str(hat.id)]
+    assert body["item_count"] == 1 and body["subtotal_pkr"] == 500
+    assert (await api.get(f"/cart/{sid}")).json() == body
+
+
+async def test_remove_only_touches_the_named_line(api, adb):
+    p = await make_product(adb, sizes=["S", "M"], stock=10)
+    sid = await make_session(api)
+    await add(api, sid, p, size="S")
+    items = (await add(api, sid, p, size="M")).json()["items"]
+    small = next(i for i in items if i["size"] == "S")
+
+    body = (await api.delete(f"/cart/{sid}/items/{small['id']}")).json()
+
+    assert [i["size"] for i in body["items"]] == ["M"]
+
+
+async def test_removing_the_last_line_leaves_an_empty_cart(api, adb):
+    p = await make_product(adb, sizes=["M"])
+    sid = await make_session(api)
+    (item,) = (await add(api, sid, p)).json()["items"]
+
+    body = (await api.delete(f"/cart/{sid}/items/{item['id']}")).json()
+
+    assert body["items"] == [] and body["item_count"] == 0 and body["subtotal_pkr"] == 0
+
+
+async def test_removing_frees_the_stock_for_a_new_add(api, adb):
+    p = await make_product(adb, sizes=["M"], stock=1)
+    sid = await make_session(api)
+    (item,) = (await add(api, sid, p)).json()["items"]
+    assert (await add(api, sid, p)).status_code == 409
+
+    await api.delete(f"/cart/{sid}/items/{item['id']}")
+
+    assert (await add(api, sid, p)).status_code == 200
+
+
+async def test_a_session_cannot_remove_another_sessions_line(api, adb):
+    p = await make_product(adb, sizes=["M"])
+    mine, theirs = await make_session(api), await make_session(api)
+    (item,) = (await add(api, theirs, p)).json()["items"]
+    await add(api, mine, p)
+
+    r = await api.delete(f"/cart/{mine}/items/{item['id']}")
+
+    assert r.status_code == 404
+    assert (await api.get(f"/cart/{theirs}")).json()["item_count"] == 1
+
+
+async def test_removing_an_unknown_or_already_removed_line_is_404(api, adb):
+    p = await make_product(adb, sizes=["M"])
+    sid = await make_session(api)
+    (item,) = (await add(api, sid, p)).json()["items"]
+
+    assert (await api.delete(f"/cart/{sid}/items/{item['id']}")).status_code == 200
+    assert (await api.delete(f"/cart/{sid}/items/{item['id']}")).status_code == 404
+    assert (await api.delete(f"/cart/{sid}/items/{uuid.uuid4()}")).status_code == 404
+
+
+async def test_remove_from_a_session_that_never_had_a_cart_is_404(api):
+    sid = await make_session(api)
+    assert (await api.delete(f"/cart/{sid}/items/{uuid.uuid4()}")).status_code == 404
+
+
+async def test_remove_with_unknown_session_is_404_and_bad_ids_are_422(api):
+    assert (await api.delete(f"/cart/{uuid.uuid4()}/items/{uuid.uuid4()}")).status_code == 404
+    assert (await api.delete(f"/cart/not-a-uuid/items/{uuid.uuid4()}")).status_code == 422
+    assert (await api.delete(f"/cart/{uuid.uuid4()}/items/not-a-uuid")).status_code == 422
+
+
+def set_qty(api, sid, item, quantity):
+    return api.patch(f"/cart/{sid}/items/{item['id']}", json={"quantity": quantity})
+
+
+async def line_for(api, adb, sid, **product_overrides):
+    p = await make_product(adb, **product_overrides)
+    (item,) = (await add(api, sid, p)).json()["items"]
+    return p, item
+
+
+async def test_setting_the_quantity_updates_the_line_and_totals(api, adb):
+    sid = await make_session(api)
+    p, item = await line_for(api, adb, sid, price_pkr=1000, sale_price_pkr=800, sizes=["M"], stock=10)
+
+    up = await set_qty(api, sid, item, 4)
+
+    assert up.status_code == 200
+    (line,) = up.json()["items"]
+    assert line["id"] == item["id"] and line["quantity"] == 4 and line["line_total_pkr"] == 3200
+    assert up.json()["item_count"] == 4 and up.json()["subtotal_pkr"] == 3200
+    down = (await set_qty(api, sid, item, 2)).json()
+    assert down["items"][0]["quantity"] == 2 and down["subtotal_pkr"] == 1600
+    assert (await api.get(f"/cart/{sid}")).json() == down
+
+
+async def test_raising_the_quantity_is_limited_by_stock(api, adb):
+    sid = await make_session(api)
+    p, item = await line_for(api, adb, sid, sizes=["M"], stock=3)
+
+    assert (await set_qty(api, sid, item, 3)).status_code == 200
+    r = await set_qty(api, sid, item, 4)
+
+    assert r.status_code == 409 and r.json()["detail"] == "Only 3 in stock"
+    assert (await api.get(f"/cart/{sid}")).json()["items"][0]["quantity"] == 3
+
+
+async def test_the_stock_limit_counts_the_products_other_lines(api, adb):
+    sid = await make_session(api)
+    p = await make_product(adb, sizes=["S", "M"], stock=5)
+    await add(api, sid, p, size="S", quantity=2)
+    items = (await add(api, sid, p, size="M")).json()["items"]
+    medium = next(i for i in items if i["size"] == "M")
+
+    assert (await set_qty(api, sid, medium, 3)).status_code == 200  # 2 + 3 = 5
+    r = await set_qty(api, sid, medium, 4)
+
+    assert r.status_code == 409
+    assert r.json()["detail"] == "Only 5 in stock (2 already in your cart in other options)"
+
+
+async def test_lowering_is_allowed_even_when_stock_has_dropped_below_the_cart(api, adb):
+    sid = await make_session(api)
+    p, item = await line_for(api, adb, sid, sizes=["M"], stock=5)
+    await set_qty(api, sid, item, 4)
+    p.stock = 1
+    await adb.flush()
+
+    assert (await set_qty(api, sid, item, 4)).status_code == 200  # unchanged is fine
+    assert (await set_qty(api, sid, item, 2)).status_code == 200  # still above stock, but lower
+    assert (await set_qty(api, sid, item, 3)).status_code == 409  # raising is not
+
+
+async def test_setting_the_same_quantity_changes_nothing(api, adb):
+    sid = await make_session(api)
+    _, item = await line_for(api, adb, sid, sizes=["M"], stock=5)
+    before = (await api.get(f"/cart/{sid}")).json()
+    assert (await set_qty(api, sid, item, 1)).json() == before
+
+
+@pytest.mark.parametrize("bad", [0, -1, 100, 1.5, "three", None])
+async def test_the_quantity_must_be_a_whole_number_from_1_to_99(api, adb, bad):
+    sid = await make_session(api)
+    _, item = await line_for(api, adb, sid, sizes=["M"], stock=200)
+    r = await set_qty(api, sid, item, bad)
+    assert r.status_code == 422
+    assert (await api.get(f"/cart/{sid}")).json()["items"][0]["quantity"] == 1
+
+
+async def test_a_session_cannot_change_another_sessions_line(api, adb):
+    mine, theirs = await make_session(api), await make_session(api)
+    p = await make_product(adb, sizes=["M"], stock=9)
+    (item,) = (await add(api, theirs, p)).json()["items"]
+    await add(api, mine, p)
+
+    assert (await set_qty(api, mine, item, 5)).status_code == 404
+    assert (await api.get(f"/cart/{theirs}")).json()["items"][0]["quantity"] == 1
+
+
+async def test_changing_an_unknown_line_or_session_is_404_and_bad_ids_are_422(api, adb):
+    sid = await make_session(api)
+    body = {"quantity": 2}
+    assert (await api.patch(f"/cart/{sid}/items/{uuid.uuid4()}", json=body)).status_code == 404  # no cart yet
+    _, item = await line_for(api, adb, sid, sizes=["M"], stock=5)
+    assert (await api.patch(f"/cart/{sid}/items/{uuid.uuid4()}", json=body)).status_code == 404
+    assert (await api.patch(f"/cart/{uuid.uuid4()}/items/{item['id']}", json=body)).status_code == 404
+    assert (await api.patch(f"/cart/not-a-uuid/items/{item['id']}", json=body)).status_code == 422
+    assert (await api.patch(f"/cart/{sid}/items/not-a-uuid", json=body)).status_code == 422
+
+
+async def test_cart_products_report_their_stock(api, adb):
+    sid = await make_session(api)
+    _, item = await line_for(api, adb, sid, sizes=["M"], stock=7)
+    assert item["product"]["stock"] == 7
