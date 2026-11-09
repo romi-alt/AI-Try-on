@@ -50,6 +50,8 @@ class ProductOut(ProductBase):
 
     id: uuid.UUID
     created_at: datetime
+    on_sale: bool
+    current_price_pkr: int
 
 
 class SimilarProductOut(ProductOut):

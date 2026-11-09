@@ -1,11 +1,19 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class SessionCreate(BaseModel):
-    consent_given: bool = False
+    # Required (no default): the shopper must explicitly consent to webcam capture.
+    consent_given: bool = Field(description="Must be true; a session cannot start without consent.")
+
+    @field_validator("consent_given")
+    @classmethod
+    def _must_consent(cls, v: bool) -> bool:
+        if v is not True:
+            raise ValueError("consent_given must be true to start a session")
+        return v
 
 
 class SessionOut(BaseModel):

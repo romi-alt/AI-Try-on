@@ -64,3 +64,12 @@ class Product(Base):
     garment_mask_url: Mapped[str | None] = mapped_column(Text)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    @property
+    def on_sale(self) -> bool:
+        return self.sale_price_pkr is not None and self.sale_price_pkr < self.price_pkr
+
+    @property
+    def current_price_pkr(self) -> int:
+        """What the shopper pays: the sale price when on sale, else the regular price."""
+        return self.sale_price_pkr if self.on_sale else self.price_pkr
