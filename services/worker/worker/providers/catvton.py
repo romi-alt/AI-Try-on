@@ -182,7 +182,9 @@ class CatVTONProvider(TryOnProvider):
             if resp.status_code == 200:
                 body = _json(resp)
                 if not body.get("id"):
-                    raise ProviderError(TEMPORARY, detail=f"unexpected /run response: {body}")
+                    raise ProviderError(
+                        TEMPORARY, detail=f"unexpected /run response with keys {sorted(body)}"
+                    )
                 return str(body["id"])
             logger.warning(
                 "catvton_run_rejected", extra={"http_status": resp.status_code, "attempt": attempt}
@@ -225,7 +227,9 @@ class CatVTONProvider(TryOnProvider):
             if status == "COMPLETED":
                 output = body.get("output")
                 if not isinstance(output, dict) or not output.get("image"):
-                    raise ProviderError(TEMPORARY, detail=f"completed with no image: {str(body)[:300]}")
+                    raise ProviderError(
+                        TEMPORARY, detail=f"completed without an image; response keys {sorted(body)}"
+                    )
                 return output, body
             if status == "FAILED":
                 raise _failure(body)

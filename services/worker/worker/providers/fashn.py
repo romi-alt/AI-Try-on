@@ -148,7 +148,9 @@ class FashnProvider(TryOnProvider):
             if resp.status_code == 200:
                 body = resp.json()
                 if body.get("error") or not body.get("id"):
-                    raise ProviderError(TEMPORARY, detail=f"unexpected /run response: {body}")
+                    raise ProviderError(
+                        TEMPORARY, detail=f"unexpected /run response with keys {sorted(body)}"
+                    )
                 return body["id"]
 
             name, message = _api_error(resp)
@@ -197,7 +199,9 @@ class FashnProvider(TryOnProvider):
             if status == "completed":
                 output = body.get("output") or []
                 if not output:
-                    raise ProviderError(TEMPORARY, detail=f"completed with no output: {body}")
+                    raise ProviderError(
+                        TEMPORARY, detail=f"completed without output; response keys {sorted(body)}"
+                    )
                 report(1.0)
                 return output[0]
             if status == "failed":

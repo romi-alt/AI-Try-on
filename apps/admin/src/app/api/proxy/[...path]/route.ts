@@ -4,6 +4,8 @@ import { authOptions } from "@/lib/auth";
 import { proxyToApi } from "@/lib/proxy";
 
 export const dynamic = "force-dynamic";
+// A CSV import can take a while on a large file; Vercel's default is shorter.
+export const maxDuration = 30;
 
 async function handle(req: NextRequest, { params }: { params: { path: string[] } }) {
   const session = await getServerSession(authOptions);

@@ -14,17 +14,23 @@ anything published after the connection opens is delivered.
 
 import asyncio
 import contextlib
-import hmac
 import json
 import logging
 import time
 import uuid
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
 from redis.exceptions import RedisError
 
+from app.core.auth import keys_match
 from app.core.config import settings
+from app.core.ratelimit import (
+    check_ip,
+    client_ip,
+    peek_blocked,
+    record_failure,
+)
 
 router = APIRouter(tags=["realtime"])
 logger = logging.getLogger("app.ws")
@@ -60,6 +66,12 @@ async def session_events(websocket: WebSocket, session: uuid.UUID):
         # Browsers do not apply CORS to WebSockets, so enforce the same allow-list here.
         logger.warning("ws_origin_rejected", extra={"origin": origin})
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    try:
+        await check_ip("ws_connect_ip", websocket)
+    except HTTPException:
+        await websocket.close(code=status.WS_1013_TRY_AGAIN_LATER)  # the client backs off and polls meanwhile
         return
 
     pattern = f"session:{session}:*"
@@ -134,6 +146,7 @@ async def _pump(
 
 STAFF_CHANNEL = "staff:requests"
 STAFF_AUTH_TIMEOUT_SECONDS = 5.0
+STAFF_AUTH_MAX_CHARS = 1024
 
 
 @router.websocket("/ws/staff")
@@ -151,13 +164,26 @@ async def staff_events(websocket: WebSocket):
         logger.warning("ws_origin_rejected", extra={"origin": origin})
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
-    await websocket.accept()
     try:
-        first = json.loads(await asyncio.wait_for(websocket.receive_text(), STAFF_AUTH_TIMEOUT_SECONDS))
+        await check_ip("ws_connect_ip", websocket)
+    except HTTPException:
+        await websocket.close(code=status.WS_1013_TRY_AGAIN_LATER)
+        return
+    await websocket.accept()
+    ip = client_ip(websocket)
+    if peek_blocked("bad_key_ip", ip):  # too many wrong keys from this address
+        await websocket.close(code=status.WS_1013_TRY_AGAIN_LATER)
+        return
+    try:
+        raw = await asyncio.wait_for(websocket.receive_text(), STAFF_AUTH_TIMEOUT_SECONDS)
+        if len(raw) > STAFF_AUTH_MAX_CHARS:  # the only thing we expect is a small JSON object with a key
+            raise ValueError("auth message too long")
+        first = json.loads(raw)
         key = first.get("key") if isinstance(first, dict) and first.get("type") == "auth" else None
     except (TimeoutError, ValueError, WebSocketDisconnect):
         key = None
     if not isinstance(key, str) or not _staff_key_ok(key):
+        record_failure("bad_key_ip", ip)
         with contextlib.suppress(Exception):
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
@@ -176,6 +202,4 @@ async def staff_events(websocket: WebSocket):
 
 
 def _staff_key_ok(key: str) -> bool:
-    return any(
-        hmac.compare_digest(key, expected) for expected in (settings.staff_api_key, settings.admin_api_key)
-    )
+    return any(keys_match(key, expected) for expected in (settings.staff_api_key, settings.admin_api_key))

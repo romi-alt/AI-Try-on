@@ -1,0 +1,17 @@
+# Alternative to the XDG autostart entry: a systemd *user* service for the kiosk account.
+#   mkdir -p ~/.config/systemd/user && cp elevariq-kiosk.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now elevariq-kiosk.service
+# It starts once the graphical session is up (so the account must log in automatically).
+[Unit]
+Description=ELEVARIQ Virtual Try on Mirror (Chrome kiosk)
+After=graphical-session.target network-online.target
+Wants=network-online.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/opt/elevariq-kiosk/start-kiosk.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

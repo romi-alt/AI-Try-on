@@ -22,7 +22,7 @@ export function ShopView() {
         <CategoryTabs />
       </div>
 
-      <div className="scroll-y mt-4 min-h-0 flex-1 px-6 pb-6" aria-busy={query.isPending}>
+      <div className="scroll-y mt-4 min-h-0 flex-1 px-6 pb-24" aria-busy={query.isPending}>
         {query.isPending && (
           <div className="grid grid-cols-3 gap-4" aria-label="Loading items">
             {Array.from({ length: 6 }, (_, i) => (

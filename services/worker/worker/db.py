@@ -56,6 +56,12 @@ tryon_jobs = Table(
     Column("status", job_status, nullable=False),
     Column("progress", Integer, nullable=False),
     Column("person_image_key", String(512), nullable=False),
+    Column(
+        "recommended_product_ids",
+        ARRAY(UUID(as_uuid=True)),
+        nullable=False,
+        server_default=text("'{}'::uuid[]"),
+    ),
     Column("result_url", Text),
     Column("error", Text),
     Column("created_at", DateTime(timezone=True)),
@@ -91,6 +97,8 @@ class JobRow:
     status: str
     progress: int
     person_image_key: str
+    recommended_product_ids: list[uuid.UUID]
+    created_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -117,6 +125,8 @@ def fetch_job(job_id: uuid.UUID) -> JobRow | None:
         status=row.status,
         progress=row.progress,
         person_image_key=row.person_image_key,
+        recommended_product_ids=list(row.recommended_product_ids or []),
+        created_at=row.created_at,
     )
 
 

@@ -17,9 +17,11 @@ from app.api.cart import _require_session
 from app.api.deps import AsyncDb
 from app.api.ws import STAFF_CHANNEL
 from app.core.auth import require_staff
+from app.core.ratelimit import check_session
 from app.core.redis import get_redis
 from app.models import Product, StaffRequest, StaffRequestStatus
 from app.schemas.staff import StaffRequestCreate, StaffRequestOut, StaffRequestStatusIn
+from app.services.events import track
 from app.services.notifier import get_notifier
 
 router = APIRouter(prefix="/requests", tags=["staff"])
@@ -52,6 +54,7 @@ async def create_request(
 ) -> StaffRequest:
     """Ask staff to bring an item (in a size). Asking again for the same open item returns that request
     (200)."""
+    await check_session("request_outfit_session", payload.session_id)
     await _require_session(db, payload.session_id)
     product = await db.get(Product, payload.product_id)
     if product is None:
@@ -63,6 +66,13 @@ async def create_request(
     if payload.size is not None and payload.size not in product.sizes:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY, f"Invalid size {payload.size!r}; available: {product.sizes}"
+        )
+
+    known_colors = {c.get("name") for c in product.colors}
+    if payload.color is not None and payload.color not in known_colors:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Invalid colour {payload.color!r}; available: {sorted(n for n in known_colors if n)}",
         )
 
     duplicate = await db.scalar(
@@ -89,6 +99,13 @@ async def create_request(
     await db.refresh(request)
     logger.info(
         "staff_request_created", extra={"request_id": str(request.id), "session_id": str(payload.session_id)}
+    )
+    track(
+        "request_outfit",
+        payload.session_id,
+        product_id=str(product.id),
+        category=product.category.value,
+        has_size=payload.size is not None,
     )
     await _publish("request.created", request)
     background.add_task(_notify, request)

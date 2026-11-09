@@ -9,12 +9,18 @@ import redis
 from rq import Queue, Worker
 from rq.serializers import JSONSerializer
 
-from worker import db, tasks
+from worker import analytics, db, tasks
 from worker.config import settings
 from worker.logging_setup import configure_logging
+from worker.observability import init_sentry
 from worker.providers import get_provider
 
 logger = logging.getLogger("worker")
+
+# An idle RQ worker refreshes its heartbeat only every `worker_ttl - 15` seconds (7 minutes by default), so
+# the health checks (API /health/ready and `python -m worker.healthcheck`, which treat a heartbeat older than
+# 90 s as dead) would report a healthy idle worker as missing. 60 s makes it check in at least every 45 s.
+WORKER_TTL_SECONDS = 60
 
 
 class TryOnWorker(Worker):
@@ -44,12 +50,15 @@ def build_worker(queues: Queue | list[Queue], conn: redis.Redis) -> Worker:
         queues if isinstance(queues, list) else [queues],
         connection=conn,
         serializer=JSONSerializer,
+        worker_ttl=WORKER_TTL_SECONDS,
         work_horse_killed_handler=tasks.handle_work_horse_killed,
     )
 
 
 def main() -> None:
     configure_logging(settings.log_level)
+    init_sentry(service=f"worker-{settings.worker_queues}")
+    analytics.configure(settings.posthog_api_key, settings.posthog_host)
     names = queue_names()
     serves_tryon = settings.tryon_queue_name in names
 

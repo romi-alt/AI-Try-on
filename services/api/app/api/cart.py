@@ -7,8 +7,10 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AsyncDb
+from app.core.ratelimit import check_session
 from app.models import Cart, CartItem, KioskSession, Product
 from app.schemas.cart import CartAddIn, CartItemOut, CartItemUpdateIn, CartOut, CartProductOut
+from app.services.events import track
 
 router = APIRouter(prefix="/cart", tags=["cart"])
 logger = logging.getLogger("app.cart")
@@ -72,6 +74,7 @@ async def _build_cart(db: AsyncSession, session_id: uuid.UUID) -> CartOut:
 
 @router.post("/add", response_model=CartOut)
 async def add_to_cart(payload: CartAddIn, db: AsyncDb):
+    await check_session("cart_session", payload.session_id)
     """Add a product to the session's cart, merging with an identical size/color line.
 
     Returns the whole updated cart. Stock is checked but not reserved.
@@ -141,6 +144,14 @@ async def add_to_cart(payload: CartAddIn, db: AsyncDb):
             "merged": line is not None,
         },
     )
+    track(
+        "add_to_cart",
+        payload.session_id,
+        product_id=str(product.id),
+        category=product.category.value,
+        quantity=payload.quantity,
+        on_sale=product.on_sale,
+    )
     return await _build_cart(db, payload.session_id)
 
 
@@ -154,6 +165,7 @@ async def set_item_quantity(
     always allowed, even if stock has since dropped below what is in the cart. The line must belong to this
     session's cart, otherwise 404. To take a line out entirely, use DELETE.
     """
+    await check_session("cart_session", session_id)
     await _require_session(db, session_id)
     cart = (
         await db.execute(select(Cart).where(Cart.session_id == session_id).with_for_update())
@@ -210,6 +222,7 @@ async def remove_from_cart(session_id: uuid.UUID, item_id: uuid.UUID, db: AsyncD
     cannot be used to delete someone else's items. An id that is already gone is also a 404, which
     a client that double-tapped can treat as "done".
     """
+    await check_session("cart_session", session_id)
     await _require_session(db, session_id)
     # Same row lock as /cart/add, so a removal and a simultaneous add are applied one at a time.
     cart = (

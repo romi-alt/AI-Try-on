@@ -10,14 +10,14 @@ import io
 import logging
 import time
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import redis
 from botocore.exceptions import BotoCoreError, ClientError
 from PIL import Image
 from rq.timeouts import JobTimeoutException
 
-from worker import db, storage
+from worker import analytics, db, storage
 from worker.config import settings
 from worker.events import JobEvents
 from worker.providers import ProviderError, get_provider
@@ -88,16 +88,31 @@ def run_tryon_job(job_id: str) -> None:
     else:
         db.mark_done(jid, result_url)
         events.done(result_url)
+        render_seconds = round(time.monotonic() - started, 2)
         logger.info(
             "job_done",
-            extra={
-                "job_id": job_id,
-                "session_id": str(job.session_id),
-                "seconds": round(time.monotonic() - started, 2),
-            },
+            extra={"job_id": job_id, "session_id": str(job.session_id), "seconds": render_seconds},
+        )
+        analytics.track(
+            "tryon_done",
+            job.session_id,
+            product_count=len(job.product_ids),
+            recommended_count=len(job.recommended_product_ids),
+            render_seconds=render_seconds,
+            # from the shopper tapping "Try it on" to the look being ready, queue time included
+            total_seconds=_since(job.created_at, render_seconds),
+            provider=settings.tryon_provider,
         )
     finally:
         conn.close()
+
+
+def _since(created_at, fallback: float) -> float:
+    """Seconds since the job row was made, or `fallback` when the row has no timestamp."""
+    if created_at is None:
+        return fallback
+    now = datetime.now(created_at.tzinfo or UTC)
+    return round(max(fallback, (now - created_at).total_seconds()), 2)
 
 
 def _render(job: db.JobRow, progress: _Progress) -> str:

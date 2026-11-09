@@ -2,12 +2,13 @@ import logging
 import uuid
 
 from botocore.exceptions import BotoCoreError, ClientError
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import AsyncDb
 from app.core.auth import require_admin
+from app.core.ratelimit import check_ip, check_session
 from app.core.redis import get_redis
 from app.core.storage import capture_key_belongs_to, object_exists
 from app.models import JobStatus, KioskSession, Product, TryOnJob
@@ -20,12 +21,14 @@ logger = logging.getLogger("app.tryon")
 
 
 @router.post("", response_model=TryOnAccepted, status_code=status.HTTP_202_ACCEPTED)
-async def create_tryon(payload: TryOnCreate, db: AsyncDb):
+async def create_tryon(payload: TryOnCreate, request: Request, db: AsyncDb):
     """Queue a try-on and return immediately.
 
     Follow progress by subscribing to the Redis channel in the response, or by polling
     `GET /tryon/{job_id}`.
     """
+    await check_session("tryon_session", payload.session_id)
+    await check_ip("tryon_ip", request)
     if not await db.get(KioskSession, payload.session_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
 

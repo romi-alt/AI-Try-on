@@ -3,14 +3,16 @@ import uuid
 from typing import Annotated
 
 from botocore.exceptions import BotoCoreError, ClientError
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, status
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import AsyncDb
 from app.core.config import settings
+from app.core.ratelimit import check_ip, check_session
 from app.core.storage import capture_key, put_capture
 from app.models import KioskSession
 from app.schemas.capture import CaptureOut
+from app.services.events import track
 from app.services.image_processing import CaptureRejected, process_capture
 
 router = APIRouter(tags=["capture"])
@@ -19,6 +21,7 @@ logger = logging.getLogger("app.capture")
 
 @router.post("/capture", response_model=CaptureOut, status_code=status.HTTP_201_CREATED)
 async def upload_capture(
+    request: Request,
     db: AsyncDb,
     session_id: Annotated[uuid.UUID, Form()],
     file: Annotated[UploadFile, File(description="JPEG or WebP, portrait, at least 768px tall, max 5 MB")],
@@ -27,6 +30,8 @@ async def upload_capture(
 
     Returns the object key to pass to `POST /tryon`. The photo is deleted after one hour.
     """
+    await check_session("capture_session", session_id)
+    await check_ip("capture_ip", request)
     if not await db.get(KioskSession, session_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
 
@@ -64,6 +69,7 @@ async def upload_capture(
             "bytes_stored": len(processed.data),
         },
     )
+    track("capture", session_id, width=processed.width, height=processed.height)
     return CaptureOut(
         key=key,
         width=processed.width,

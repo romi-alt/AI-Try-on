@@ -15,6 +15,8 @@ import time
 import uuid
 from datetime import UTC, datetime
 
+from app.core.redact import redact_text, redact_value
+
 request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("request_id", default=None)
 
 _STANDARD_ATTRS = set(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
@@ -29,15 +31,15 @@ class JsonFormatter(logging.Formatter):
             "timestamp": datetime.fromtimestamp(record.created, UTC).isoformat(timespec="milliseconds"),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": redact_value(record.getMessage()),
         }
         if request_id := request_id_var.get():
             payload["request_id"] = request_id
         for key, value in record.__dict__.items():
             if key not in _STANDARD_ATTRS and not key.startswith("_"):
-                payload[key] = value
+                payload[key] = redact_value(value)
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
+            payload["exception"] = redact_text(self.formatException(record.exc_info))
         return json.dumps(payload, default=str)
 
 
@@ -90,7 +92,7 @@ class RequestLoggingMiddleware:
         try:
             await self.app(scope, receive, send_with_request_id)
         except Exception:
-            request_logger.exception("unhandled_exception", extra={"path": scope["path"]})
+            request_logger.exception("unhandled_exception", extra={"path": redact_text(scope["path"])})
             raise
         finally:
             route = getattr(scope.get("route"), "path", None)
@@ -100,7 +102,7 @@ class RequestLoggingMiddleware:
                 "request",
                 extra={
                     "method": scope["method"],
-                    "path": scope["path"],
+                    "path": redact_text(scope["path"]),  # /m/CODE is a credential: the code is masked
                     "route": route,
                     "status": status,
                     "duration_ms": round((time.perf_counter() - started) * 1000, 1),

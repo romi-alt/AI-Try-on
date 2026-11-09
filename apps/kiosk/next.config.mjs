@@ -1,7 +1,25 @@
+import { withSentryConfig } from "@sentry/nextjs";
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  output: "standalone",
+  experimental: { instrumentationHook: true }, // loads src/instrumentation.ts (Sentry on the server)
+  // The Docker image uses the standalone server; on Vercel (VERCEL=1) Vercel builds its own output.
+  output: process.env.VERCEL ? undefined : "standalone",
+  async headers() {
+    const security = [
+      { key: "X-Content-Type-Options", value: "nosniff" },
+      { key: "Referrer-Policy", value: "no-referrer" },
+      { key: "X-Frame-Options", value: "DENY" },
+      // The mirror needs its camera (and nothing else); the browser must not offer anything more to this page.
+      { key: "Permissions-Policy", value: "camera=(self), microphone=(), geolocation=(), payment=()" },
+    ];
+    return [
+      { source: "/:path*", headers: security },
+      // The service worker file itself must always be re-checked, or a fixed worker would never reach the mirror.
+      { source: "/sw.js", headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }, { key: "Service-Worker-Allowed", value: "/" }] },
+    ];
+  },
   images: {
     // Media comes from MinIO locally and R2 in production; allow any https host
     // plus the local MinIO port. Tighten this once the public R2 domain is known.
@@ -13,4 +31,16 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+// Error reporting stays off until NEXT_PUBLIC_SENTRY_DSN is set. Source maps are only uploaded when a Sentry auth
+// token is present at build time (SENTRY_AUTH_TOKEN, with SENTRY_ORG and SENTRY_PROJECT); otherwise nothing is
+// uploaded and the build makes no network calls to Sentry.
+export default withSentryConfig(nextConfig, {
+  silent: true,
+  telemetry: false,
+  disableLogger: true,
+  org: process.env.SENTRY_ORG,
+  project: process.env.SENTRY_PROJECT,
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  sourcemaps: { disable: !process.env.SENTRY_AUTH_TOKEN },
+  hideSourceMaps: true,
+});

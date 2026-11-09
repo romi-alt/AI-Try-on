@@ -146,6 +146,14 @@ def _delete_where(prefix: str, doomed: Callable[[dict], bool]) -> int:
     return deleted + flush()
 
 
+RESULT_PREFIX = "results/"
+
+
+def delete_results_older_than(cutoff: datetime) -> int:
+    """Delete every finished look under `results/` last modified before `cutoff`. Returns the count."""
+    return _delete_where(RESULT_PREFIX, lambda obj: obj["LastModified"] < cutoff)
+
+
 def delete_captures_older_than(cutoff: datetime) -> int:
     """Delete every object under `captures/` last modified before `cutoff`. Returns the count."""
     return _delete_where(CAPTURE_PREFIX, lambda obj: obj["LastModified"] < cutoff)

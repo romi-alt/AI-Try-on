@@ -1,5 +1,6 @@
 "use client";
 
+import { retentionText } from "@/lib/privacy";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CloseIcon } from "@/components/Icons";
 import { CAMERA_CONSTRAINTS, describeCameraError } from "@/lib/cameraErrors";
@@ -197,7 +198,13 @@ export function CaptureScreen() {
         <button type="button" onClick={cancel} className="btn-ghost" aria-label="Cancel and go back to the shop">
           <CloseIcon /> Cancel
         </button>
-        <h1 className="text-3xl font-semibold">{counting ? "Strike a pose" : "Step into the mirror"}</h1>
+        <div className="text-center">
+          <h1 className="text-3xl font-semibold">{counting ? "Strike a pose" : "Step into the mirror"}</h1>
+          {/* The privacy badge steps aside on this screen (it would cover the guidance), so the promise is stated here. */}
+          <p className="mt-1 text-lg text-mist/60" data-testid="capture-privacy">
+            🔒 Your photo is deleted within {retentionText()}
+          </p>
+        </div>
         <span className="w-40" aria-hidden />
       </header>
 

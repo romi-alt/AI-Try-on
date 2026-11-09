@@ -231,3 +231,32 @@ uvicorn app.main:app --reload
 ```
 
 Interactive docs: http://localhost:8000/docs
+
+## Operations
+
+**Rate limits** (`app/core/ratelimit.py`; a Redis fixed window, so the burst ceiling is twice the limit; hashed addresses; fails
+open if Redis is down; `RATE_LIMIT_SCALE` multiplies all of them):
+
+| Rule | Limit | Key |
+|------|-------|-----|
+| start a session | 30 / min | address |
+| photo upload | 10 / min, 60 / min | session, address |
+| try-on | 12 / 10 min, 120 / 10 min | session, address |
+| cart add / change / remove | 60 / min | session |
+| share link, Request Outfit, checkout | 10 / min each | session |
+| mobile page | 120 / min | address |
+| unknown mobile code | 20 / 10 min, then locked out | address |
+| mobile checkout | 10 / 10 min, 30 / 10 min | code, address |
+| WebSocket connect | 60 / min | address |
+| wrong admin or staff key | 10 / 5 min, then locked out | address |
+
+A limited request gets `429` with `Retry-After`. Behind a proxy, run uvicorn with `--proxy-headers` and never publish the API port.
+
+**Health**: `GET /health` is liveness (touches nothing). `GET /health/ready` returns 503 when Postgres or Redis is down and
+`"status": "degraded"` (200) when storage or the try-on worker is unavailable.
+
+**Photos**: captures (`captures/`) and finished looks (`results/`) are deleted by a sweeper after `CAPTURE_TTL_SECONDS` /
+`RESULT_TTL_SECONDS` (one hour). `python -m scripts.apply_lifecycle` adds day-long bucket rules for both as a backstop.
+
+**Events** (`app/services/events.py`, PostHog; off without `POSTHOG_API_KEY`): `session_start`, `capture`, `add_to_cart`,
+`request_outfit` from the API, `tryon_done` from the worker. Anonymous (the session id only), no pictures or storage keys.

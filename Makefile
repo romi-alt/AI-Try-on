@@ -81,6 +81,15 @@ test: ## Run API and worker tests (needs the stack up and `make migrate` done)
 test-catvton: ## Run the CatVTON GPU service's unit tests (fake model objects: no GPU or Docker needed)
 	cd services/catvton && python -m pytest -q
 
+
+.PHONY: test-deploy
+test-deploy: ## Test the deployment helpers: preflight checker, kiosk launcher, policy installer (no Docker needed)
+	cd deploy && python -m pytest -q
+
+.PHONY: preflight
+preflight: ## Check deploy/.env.production before deploying
+	python3 deploy/preflight.py
+
 .PHONY: benchmark-fake
 benchmark-fake: ## Try the latency/cost benchmark against the built-in fake RunPod (simulated numbers)
 	cd services/worker && python -m worker.benchmark --fake --jobs 5 --price-per-second 0.0003
