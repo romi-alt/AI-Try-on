@@ -51,6 +51,13 @@ export function captureRegion(frameWidth: number, frameHeight: number, aspect = 
 export type Thresholds = {
   /** A landmark counts as seen at or above this confidence. */
   minVisibility: number;
+  /**
+   * The same, for the ankles only. Long garments (shalwar, sharara, lehenga, abaya) hide the legs, and MediaPipe then
+   * still places the ankles about right but reports a low confidence (0.25 to 0.35 measured on a woman in a sharara,
+   * against 0.99 in trousers). Asking for 0.5 there kept the mirror on "Step back" for the garments it is for. The
+   * ankles must still be inside the photo, so someone cut off at the knees is still told to step back.
+   */
+  minAnkleVisibility: number;
   /** How close to the edge of the photo the head or ankles may be, as a fraction of its size. */
   edgeMargin: number;
   /**
@@ -66,14 +73,15 @@ export type Thresholds = {
 
 export const DEFAULTS: Thresholds = {
   minVisibility: 0.5,
+  minAnkleVisibility: 0.2,
   edgeMargin: 0.02,
   minBodyHeight: 0.4,
   centerTolerance: 0.14,
   sideMargin: 0.02,
 };
 
-const seen = (p: Landmark | undefined, t: Thresholds): p is Landmark =>
-  !!p && (p.visibility ?? 1) >= t.minVisibility && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1;
+const seen = (p: Landmark | undefined, t: Thresholds, minVisibility = t.minVisibility): p is Landmark =>
+  !!p && (p.visibility ?? 1) >= minVisibility && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1;
 
 const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
 
@@ -94,7 +102,7 @@ export function assess(landmarks: Landmark[] | null | undefined, region: Region,
   const head = landmarks[LM.NOSE];
   const ankles = [landmarks[LM.LEFT_ANKLE], landmarks[LM.RIGHT_ANKLE]];
   const headOk = seen(head, t) && inside(head);
-  const anklesOk = ankles.every((a) => seen(a, t) && inside(a));
+  const anklesOk = ankles.every((a) => seen(a, t, t.minAnkleVisibility) && inside(a));
   if (!headOk || !anklesOk) return "step_back";
 
   const height = (mean(ankles.map((a) => a.y)) - head.y) / rh;
@@ -103,7 +111,7 @@ export function assess(landmarks: Landmark[] | null | undefined, region: Region,
   // The body's middle and its width from head to toe. Arms are left out: a pose with arms out must not read as "off-centre".
   const spine = [LM.LEFT_SHOULDER, LM.RIGHT_SHOULDER, LM.LEFT_HIP, LM.RIGHT_HIP, LM.LEFT_KNEE, LM.RIGHT_KNEE, LM.LEFT_ANKLE, LM.RIGHT_ANKLE]
     .map((i) => landmarks[i])
-    .filter((p) => seen(p, t));
+    .filter((p) => seen(p, t, t.minAnkleVisibility)); // legs under a long garment are low-confidence but still placed
   const xs = spine.map((p) => p.x);
   const middle = (mean(torso.filter((p) => seen(p, t)).map((p) => p.x)) - region.left) / rw; // 0..1 across the photo
   if (Math.abs(middle - 0.5) > t.centerTolerance) return "center";

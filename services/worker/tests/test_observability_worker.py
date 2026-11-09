@@ -191,3 +191,12 @@ def test_the_worker_and_api_copies_of_the_shared_modules_are_identical():
     api = Path(__file__).resolve().parents[2] / "api" / "app"
     assert (here / "analytics.py").read_bytes() == (api / "services/events.py").read_bytes()
     assert (here / "redact.py").read_bytes() == (api / "core/redact.py").read_bytes()
+
+
+def test_an_idle_worker_checks_in_often_enough_for_the_health_checks_to_trust_it(redis_conn):
+    """RQ refreshes an idle worker heartbeat every worker_ttl - 15 s; health checks give up after 90 s."""
+    from worker.main import WORKER_TTL_SECONDS, build_worker
+
+    worker = build_worker(Queue("hc-idle", connection=redis_conn, serializer=JSONSerializer), redis_conn)
+    assert worker.worker_ttl == WORKER_TTL_SECONDS
+    assert worker.dequeue_timeout < healthcheck.MAX_HEARTBEAT_AGE_SECONDS

@@ -17,6 +17,11 @@ from worker.providers import get_provider
 
 logger = logging.getLogger("worker")
 
+# An idle RQ worker refreshes its heartbeat only every `worker_ttl - 15` seconds (7 minutes by default), so
+# the health checks (API /health/ready and `python -m worker.healthcheck`, which treat a heartbeat older than
+# 90 s as dead) would report a healthy idle worker as missing. 60 s makes it check in at least every 45 s.
+WORKER_TTL_SECONDS = 60
+
 
 class TryOnWorker(Worker):
     def run_maintenance_tasks(self):
@@ -45,6 +50,7 @@ def build_worker(queues: Queue | list[Queue], conn: redis.Redis) -> Worker:
         queues if isinstance(queues, list) else [queues],
         connection=conn,
         serializer=JSONSerializer,
+        worker_ttl=WORKER_TTL_SECONDS,
         work_horse_killed_handler=tasks.handle_work_horse_killed,
     )
 

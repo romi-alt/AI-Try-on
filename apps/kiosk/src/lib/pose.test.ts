@@ -48,8 +48,22 @@ describe("assess", () => {
     expect(assess(person({ bottom: 1.2 }), LANDSCAPE)).toBe("step_back"); // ankles below the frame
     expect(assess(person({ bottom: 0.995 }), LANDSCAPE)).toBe("step_back"); // touching the bottom edge
     const hidden = person();
-    hidden[LM.LEFT_ANKLE] = { ...hidden[LM.LEFT_ANKLE], visibility: 0.2 }; // one ankle not seen
+    hidden[LM.LEFT_ANKLE] = { ...hidden[LM.LEFT_ANKLE], visibility: 0.05 }; // one ankle not seen at all
     expect(assess(hidden, LANDSCAPE)).toBe("step_back");
+  });
+
+  it("accepts low-confidence ankles that are inside the picture: long garments hide the legs", () => {
+    // Measured with MediaPipe on a woman in a sharara: knees 0.27, ankles 0.25 and 0.35, but placed correctly.
+    const sharara = person();
+    for (const i of [LM.LEFT_KNEE, LM.RIGHT_KNEE]) sharara[i] = { ...sharara[i], visibility: 0.27 };
+    sharara[LM.LEFT_ANKLE] = { ...sharara[LM.LEFT_ANKLE], visibility: 0.25 };
+    sharara[LM.RIGHT_ANKLE] = { ...sharara[LM.RIGHT_ANKLE], visibility: 0.35 };
+    expect(assess(sharara, LANDSCAPE)).toBe("hold_still");
+  });
+
+  it("still says step back when low-confidence ankles are below the picture (cut off at the knees)", () => {
+    const cut = person({ bottom: 1.2 }).map((p, i) => (i === LM.LEFT_ANKLE || i === LM.RIGHT_ANKLE ? { ...p, visibility: 0.3 } : p));
+    expect(assess(cut, LANDSCAPE)).toBe("step_back");
   });
 
   it("says step back until the head is in the picture", () => {
