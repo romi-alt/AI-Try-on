@@ -35,20 +35,47 @@ describe("requests", () => {
 
   it("builds catalog queries from the filters, leaving defaults out", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ items: [] }));
-    await api.listCatalog({ category: "all", page: 1, pageSize: 12 });
-    await api.listCatalog({ category: "dress", onSale: true, search: "  silk ", page: 2, pageSize: 12 });
+    await api.listCatalog({ page: 1, pageSize: 12 });
+    await api.listCatalog({ categories: ["top", "dress"], onSale: true, search: "  silk ", page: 2, pageSize: 12 });
     await api.listCatalog({ onSale: false, search: "   " });
+    await api.listCatalog({ minDiscountPct: 50, newWithinDays: 30 });
 
     const q = (i: number) => new URL(String(fetch.mock.calls[i][0])).searchParams;
     expect(Object.fromEntries(q(0))).toEqual({ page: "1", page_size: "12" });
-    expect(Object.fromEntries(q(1))).toEqual({
-      page: "2",
-      page_size: "12",
-      category: "dress",
-      on_sale: "true",
-      search: "silk",
-    });
+    expect(q(1).getAll("category")).toEqual(["top", "dress"]); // repeated, as the API expects
+    expect(Object.fromEntries(q(1))).toMatchObject({ page: "2", on_sale: "true", search: "silk" });
     expect([...q(2).keys()].sort()).toEqual(["page", "page_size"]);
+    expect(Object.fromEntries(q(3))).toMatchObject({ min_discount_pct: "50", new_within_days: "30" });
+  });
+
+  it("asks for recommendations with the ids comma-separated", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ more_styles: [], complete_your_look: [] }));
+    await api.recommend(["a", "b"]);
+    expect(new URL(String(fetch.mock.calls[0][0])).searchParams.get("product_ids")).toBe("a,b");
+  });
+
+  it("tells the API which products came from a recommendation", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ job_id: "j", status: "queued", channel: "c" }, 202));
+    await api.createTryOn("s", "captures/s/x.webp", ["a", "b"], ["b"]);
+    await api.createTryOn("s", "captures/s/x.webp", ["a"]);
+    expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toMatchObject({ product_ids: ["a", "b"], recommended_product_ids: ["b"] });
+    expect(JSON.parse(String(fetch.mock.calls[1][1]?.body)).recommended_product_ids).toEqual([]);
+  });
+
+  it("creates a share link, asks for an outfit, and sends the staff key only where it belongs", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({}));
+    await api.createShare("s", "job-1");
+    await api.requestOutfit({ sessionId: "s", productId: "p", size: "M", color: null });
+    await api.listStaffRequests("staff-key");
+    await api.updateStaffRequest("staff-key", "r1", "done");
+    await api.getMobileLook("AB 12");
+    const calls = fetch.mock.calls;
+    expect(JSON.parse(String(calls[0][1]?.body))).toEqual({ session_id: "s", job_id: "job-1" });
+    expect(JSON.parse(String(calls[1][1]?.body))).toEqual({ session_id: "s", product_id: "p", size: "M", color: null });
+    expect(new Headers(calls[1][1]?.headers).has("X-Staff-Key")).toBe(false);
+    expect(new Headers(calls[2][1]?.headers).get("X-Staff-Key")).toBe("staff-key");
+    expect(String(calls[3][0])).toMatch(/\/requests\/r1$/);
+    expect(String(calls[4][0])).toMatch(/\/m\/AB%2012$/); // the code is encoded, not trusted
   });
 
   it("uploads the photo as multipart without forcing a Content-Type", async () => {
@@ -69,6 +96,7 @@ describe("requests", () => {
       session_id: "s1",
       capture_key: "captures/s1/a.webp",
       product_ids: ["p1", "p2"],
+      recommended_product_ids: [],
     });
   });
 

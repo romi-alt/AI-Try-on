@@ -97,3 +97,45 @@ export type Order = {
   status_changed_at: string | null;
   items: OrderItem[];
 };
+
+/** `GET /recommend` */
+export type LookSuggestion = {
+  category: Category;
+  product: Product;
+  similarity: number | null;
+  reason: string;
+};
+export type Recommendations = {
+  more_styles: (Product & { distance: number | null })[];
+  complete_your_look: LookSuggestion[];
+};
+
+/** `POST /share` */
+export type ShareLink = { short_code: string; path: string; expires_at: string };
+
+/** `POST /requests` ("Request Outfit") and what the staff page lists. */
+export type StaffRequestStatus = "open" | "bringing" | "done";
+export type StaffRequest = {
+  id: string;
+  session_id: string;
+  product_id: string;
+  product_name: string;
+  size: string | null;
+  color: string | null;
+  status: StaffRequestStatus;
+  created_at: string;
+  updated_at: string;
+};
+
+/** `GET /m/{code}`: what the mobile page shows. */
+export type MobileLook = {
+  short_code: string;
+  expires_at: string;
+  look_image_url: string | null;
+  cart: { items: CartItem[]; item_count: number; subtotal_pkr: number };
+  order: Order | null;
+};
+export type MobileCheckout = {
+  order: Order;
+  payment: { provider: string; status: string; reference: string; redirect_url: string | null };
+};

@@ -28,3 +28,67 @@ textarea {
 .mirrored {
   transform: scaleX(-1);
 }
+
+/* --- dark glass design system ------------------------------------------------------------------------------
+   The kiosk is a 1080x1920 portrait touch screen. Everything tappable is at least 64px (min-h-16 / min-w-16). */
+@layer base {
+  body {
+    background:
+      radial-gradient(900px 700px at 12% 8%, rgba(215, 200, 168, 0.12), transparent 60%),
+      radial-gradient(800px 800px at 95% 55%, rgba(120, 140, 255, 0.1), transparent 60%),
+      radial-gradient(700px 600px at 30% 100%, rgba(255, 120, 160, 0.07), transparent 60%),
+      #0b0b0f;
+    background-attachment: fixed;
+  }
+  button {
+    touch-action: manipulation; /* no double-tap zoom delay on a touch screen */
+  }
+}
+
+@layer components {
+  .glass {
+    @apply border border-white/10 bg-white/[0.06] shadow-[0_8px_40px_rgba(0,0,0,0.35)] backdrop-blur-xl;
+  }
+  .glass-strong {
+    @apply border border-white/15 bg-[#14141b]/80 shadow-[0_16px_60px_rgba(0,0,0,0.5)] backdrop-blur-2xl;
+  }
+  .btn {
+    @apply inline-flex min-h-16 min-w-16 items-center justify-center gap-3 rounded-2xl px-7 text-xl font-medium transition active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40;
+  }
+  .btn-primary {
+    @apply btn bg-mist text-ink hover:bg-white;
+  }
+  .btn-ghost {
+    @apply btn border border-white/20 bg-white/5 text-mist hover:bg-white/10;
+  }
+  .chip {
+    @apply inline-flex min-h-16 min-w-16 items-center justify-center rounded-2xl border border-white/20 bg-white/5 px-5 text-xl transition active:scale-[0.97];
+  }
+  .chip[aria-pressed="true"],
+  .chip[aria-selected="true"] {
+    @apply border-accent bg-accent text-ink;
+  }
+  .scroll-y {
+    overflow-y: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .scroll-y::-webkit-scrollbar,
+  .scroll-x::-webkit-scrollbar {
+    display: none;
+  }
+  .scroll-x {
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+@keyframes fadein {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

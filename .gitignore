@@ -31,3 +31,6 @@ infra/data/
 .DS_Store
 .idea/
 .vscode/
+
+# MediaPipe WASM and model, fetched by apps/kiosk/scripts/fetch-pose-assets.mjs
+apps/kiosk/public/mediapipe/

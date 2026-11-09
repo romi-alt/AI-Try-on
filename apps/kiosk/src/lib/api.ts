@@ -5,9 +5,14 @@ import type {
   CatalogPage,
   Category,
   JobState,
+  MobileCheckout,
+  MobileLook,
   Order,
   Product,
+  Recommendations,
   Session,
+  ShareLink,
+  StaffRequest,
   TryOnAccepted,
 } from "./types";
 
@@ -73,8 +78,12 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = DEFA
 }
 
 export type CatalogQuery = {
-  category?: Category | "all";
+  categories?: Category[];
   onSale?: boolean;
+  /** Only items marked down by at least this percentage. */
+  minDiscountPct?: number;
+  /** Only items added in the last N days. */
+  newWithinDays?: number;
   search?: string;
   page?: number;
   pageSize?: number;
@@ -85,13 +94,27 @@ export const api = {
   createSession: () =>
     request<Session>("/sessions", { method: "POST", body: JSON.stringify({ consent_given: true }) }),
 
-  listCatalog: ({ category, onSale, search, page = 1, pageSize = config.catalogPageSize }: CatalogQuery = {}) => {
+  listCatalog: ({
+    categories,
+    onSale,
+    minDiscountPct,
+    newWithinDays,
+    search,
+    page = 1,
+    pageSize = config.catalogPageSize,
+  }: CatalogQuery = {}) => {
     const q = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
-    if (category && category !== "all") q.set("category", category);
+    for (const c of categories ?? []) q.append("category", c);
     if (onSale) q.set("on_sale", "true");
+    if (minDiscountPct) q.set("min_discount_pct", String(minDiscountPct));
+    if (newWithinDays) q.set("new_within_days", String(newWithinDays));
     if (search?.trim()) q.set("search", search.trim());
     return request<CatalogPage>(`/catalog?${q}`);
   },
+
+  /** More styles and "Complete your look" for the chosen items. */
+  recommend: (productIds: string[]) =>
+    request<Recommendations>(`/recommend?${new URLSearchParams({ product_ids: productIds.join(",") })}`),
 
   getProduct: (id: string) => request<Product>(`/products/${id}`),
 
@@ -103,10 +126,16 @@ export const api = {
     return request<CaptureResult>("/capture", { method: "POST", body: form }, UPLOAD_TIMEOUT_MS);
   },
 
-  createTryOn: (sessionId: string, captureKey: string, productIds: string[]) =>
+  /** `recommendedIds`: the part of `productIds` the shopper added from the recommendations (for analytics). */
+  createTryOn: (sessionId: string, captureKey: string, productIds: string[], recommendedIds: string[] = []) =>
     request<TryOnAccepted>("/tryon", {
       method: "POST",
-      body: JSON.stringify({ session_id: sessionId, capture_key: captureKey, product_ids: productIds }),
+      body: JSON.stringify({
+        session_id: sessionId,
+        capture_key: captureKey,
+        product_ids: productIds,
+        recommended_product_ids: recommendedIds,
+      }),
     }),
 
   getJob: (jobId: string) => request<JobState>(`/jobs/${jobId}`),
@@ -142,4 +171,41 @@ export const api = {
   /** Removes one whole line and returns the updated cart. A line that is already gone is a 404. */
   removeFromCart: (sessionId: string, itemId: string) =>
     request<Cart>(`/cart/${sessionId}/items/${itemId}`, { method: "DELETE" }),
+
+  /** A short code for the mobile page (`/m/{code}`) showing this session's cart and, optionally, one finished look. */
+  createShare: (sessionId: string, jobId?: string | null) =>
+    request<ShareLink>("/share", {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId, job_id: jobId ?? null }),
+    }),
+
+  /** "Request Outfit": ask staff to bring an item in a size. Asking again for the same open item is harmless. */
+  requestOutfit: (args: { sessionId: string; productId: string; size: string | null; color: string | null }) =>
+    request<StaffRequest>("/requests", {
+      method: "POST",
+      body: JSON.stringify({
+        session_id: args.sessionId,
+        product_id: args.productId,
+        size: args.size,
+        color: args.color,
+      }),
+    }),
+
+  // --- the mobile page (/m/{code}): public, the code is the credential ---
+  getMobileLook: (code: string) => request<MobileLook>(`/m/${encodeURIComponent(code)}`),
+  mobileCheckout: (code: string, idempotencyKey: string) =>
+    request<MobileCheckout>(`/m/${encodeURIComponent(code)}/checkout`, {
+      method: "POST",
+      body: JSON.stringify({ idempotency_key: idempotencyKey }),
+    }),
+
+  // --- the staff page: a staff key in X-Staff-Key ---
+  listStaffRequests: (staffKey: string) =>
+    request<StaffRequest[]>("/requests", { headers: { "X-Staff-Key": staffKey } }),
+  updateStaffRequest: (staffKey: string, id: string, status: "bringing" | "done") =>
+    request<StaffRequest>(`/requests/${id}`, {
+      method: "PATCH",
+      headers: { "X-Staff-Key": staffKey },
+      body: JSON.stringify({ status }),
+    }),
 };
