@@ -1,6 +1,8 @@
 """S3-compatible object storage (MinIO locally, Cloudflare R2 in production)."""
 
+import re
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 
@@ -109,8 +111,8 @@ def put_capture(key: str, data: bytes, session_id: uuid.UUID | str) -> None:
     )
 
 
-def delete_captures_older_than(cutoff: datetime) -> int:
-    """Delete every object under `captures/` last modified before `cutoff`. Returns the count."""
+def _delete_where(prefix: str, doomed: Callable[[dict], bool]) -> int:
+    """Delete every object under `prefix` for which `doomed(listing_entry)` is true. Returns the count."""
     client = internal_client()
     deleted = 0
     batch: list[dict] = []
@@ -125,12 +127,54 @@ def delete_captures_older_than(cutoff: datetime) -> int:
         batch.clear()
         return n
 
-    for page in client.get_paginator("list_objects_v2").paginate(
-        Bucket=settings.s3_bucket, Prefix=CAPTURE_PREFIX
-    ):
+    for page in client.get_paginator("list_objects_v2").paginate(Bucket=settings.s3_bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
-            if obj["LastModified"] < cutoff:
+            if doomed(obj):
                 batch.append({"Key": obj["Key"]})
                 if len(batch) >= DELETE_BATCH_SIZE:
                     deleted += flush()
     return deleted + flush()
+
+
+def delete_captures_older_than(cutoff: datetime) -> int:
+    """Delete every object under `captures/` last modified before `cutoff`. Returns the count."""
+    return _delete_where(CAPTURE_PREFIX, lambda obj: obj["LastModified"] < cutoff)
+
+
+# --- garment images (uploaded by the admin app straight to the bucket) --------------------------
+
+GARMENT_PREFIX = "garment/"
+_GARMENT_KEY = re.compile(r"^garment/\d{4}/\d{2}/\d{2}/[0-9a-f]{32}\.(png|jpg|webp)$")
+_EXT_CONTENT_TYPE = {ext: ct for ct, ext in _CONTENT_TYPE_EXT.items()}
+
+
+def is_garment_key(key: str) -> bool:
+    """True only for keys `build_key("garment", ...)` produces, so verify cannot be aimed at other objects."""
+    return bool(_GARMENT_KEY.fullmatch(key))
+
+
+def expected_content_type(key: str) -> str:
+    return _EXT_CONTENT_TYPE[key.rsplit(".", 1)[1]]
+
+
+def object_info(key: str) -> dict | None:
+    """`{size, content_type}` of an object, or None when it is definitely absent; storage outages raise."""
+    try:
+        head = internal_client().head_object(Bucket=settings.s3_bucket, Key=key)
+    except ClientError as e:
+        if e.response["Error"]["Code"] in ("404", "NoSuchKey", "NotFound"):
+            return None
+        raise
+    return {"size": head["ContentLength"], "content_type": head.get("ContentType", "")}
+
+
+def delete_object(key: str) -> None:
+    internal_client().delete_object(Bucket=settings.s3_bucket, Key=key)
+
+
+def delete_oversized_garments(max_bytes: int) -> int:
+    """Delete every object under `garment/` larger than `max_bytes`. Returns the count.
+
+    An upload in progress is not listed until it completes, so only finished (and so final) sizes are seen.
+    """
+    return _delete_where(GARMENT_PREFIX, lambda obj: obj["Size"] > max_bytes)

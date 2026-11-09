@@ -22,6 +22,7 @@ FastAPI backend. Owns the catalog, kiosk sessions, presigned uploads and try-on 
 | GET    | `/jobs/{id}`                 | –      | Latest job state from Redis (falls back to Postgres): the polling fallback and reconnect read |
 | WS     | `/ws?session={id}`           | –      | Live job events for one session (see Real-time updates) |
 | POST   | `/uploads/presign`           | admin  | Presigned PUT URL for admin garment images   |
+| POST   | `/uploads/verify`            | admin  | Check an uploaded garment image after the PUT; deletes it and answers 413/422 if it is too big, empty or the wrong type |
 | GET    | `/tryon`                     | admin  | Recent jobs                                  |
 | GET    | `/admin/stats`               | admin  | Dashboard counters                           |
 
@@ -43,6 +44,21 @@ FastAPI backend. Owns the catalog, kiosk sessions, presigned uploads and try-on 
 - **Async DB:** the catalog, products, sessions and cart routes use an async SQLAlchemy session
   (`app/core/db.py::get_async_db`). Alembic, the seed script and the try-on/upload/health routes,
   which call blocking clients, use the sync engine.
+
+## Garment image uploads
+
+The admin app PUTs garment images straight to the bucket with a URL from `POST /uploads/presign` (admin key
+required). A presigned PUT cannot limit the size of what is sent (a presigned POST policy could, but Cloudflare R2
+does not support it), so the size is checked afterwards, in two places:
+
+- **`POST /uploads/verify`** (`{key}`), called by the admin app right after the PUT. It reads the object's size and
+  content type; an object over `GARMENT_MAX_BYTES` (default 10 MB, matching the admin app's own limit), empty, or
+  stored under a type that does not match its key is **deleted** and refused (413 / 422). It only accepts keys of
+  the form `/uploads/presign` produces, so it cannot be aimed at captures, results or anything else.
+- **The sweeper** that already removes old captures also deletes any `garment/` object over the limit on every pass
+  (every `CAPTURE_CLEANUP_INTERVAL_SECONDS`), so a file nobody verified does not stay.
+
+Neither looks inside the file, so a small file with a valid type can still hold something that is not an image.
 
 ## Capture and try-on
 

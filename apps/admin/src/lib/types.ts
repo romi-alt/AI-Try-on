@@ -73,3 +73,4 @@ export type Stats = {
 };
 
 export type PresignResponse = { key: string; upload_url: string; public_url: string; expires_in: number };
+export type UploadCheck = { key: string; size_bytes: number; content_type: string; public_url: string };

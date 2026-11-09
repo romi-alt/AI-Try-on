@@ -14,3 +14,14 @@ class PresignResponse(BaseModel):
     upload_url: str
     public_url: str
     expires_in: int
+
+
+class VerifyRequest(BaseModel):
+    key: str
+
+
+class VerifyResponse(BaseModel):
+    key: str
+    size_bytes: int
+    content_type: str
+    public_url: str

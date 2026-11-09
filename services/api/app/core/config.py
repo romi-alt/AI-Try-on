@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     s3_secret_access_key: str = "minioadmin_dev_password"
     s3_public_base_url: str = "http://localhost:9000/tryon-media"
     presign_expires_seconds: int = 600
+    # Garment images go straight to the bucket (a presigned PUT cannot cap the size), so the size is
+    # checked afterwards: by POST /uploads/verify, and by the sweeper for uploads nobody verified.
+    # Keep this at or above the admin app's own limit (10 MB) so its pre-check never disagrees.
+    garment_max_bytes: int = 10 * 1024 * 1024
 
     # --- webcam captures (POST /capture) ---
     capture_max_bytes: int = 5 * 1024 * 1024

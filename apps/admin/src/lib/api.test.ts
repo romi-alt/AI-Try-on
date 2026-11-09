@@ -131,11 +131,13 @@ describe("errors", () => {
 describe("uploadImage", () => {
   const file = new File(["png-bytes"], "shirt.png", { type: "image/png" });
   const presign = { key: "garment/2026/01/01/x.png", upload_url: "http://storage.test/put?sig=1", public_url: "http://storage.test/bucket/garment/x.png", expires_in: 600 };
+  const checked = { key: presign.key, size_bytes: 9, content_type: "image/png", public_url: presign.public_url };
 
-  it("asks for a presigned URL, PUTs the file there, and returns the public URL", async () => {
+  it("asks for a presigned URL, PUTs the file there, has the API check it, and returns the public URL", async () => {
     const fetch = vi.spyOn(globalThis, "fetch");
     fetch.mockResolvedValueOnce(json(presign));
     fetch.mockResolvedValueOnce(new Response(null, { status: 200 }));
+    fetch.mockResolvedValueOnce(json(checked));
 
     const url = await api.uploadImage(file);
 
@@ -149,6 +151,19 @@ describe("uploadImage", () => {
     expect(putInit?.body).toBe(file);
     expect(new Headers(putInit?.headers).get("Content-Type")).toBe("image/png");
     expect(new Headers(putInit?.headers).has("X-Admin-Key")).toBe(false); // the key must not go to storage
+    const [verifyUrl, verifyInit] = fetch.mock.calls[2];
+    expect(String(verifyUrl)).toMatch(/\/uploads\/verify$/);
+    expect(verifyInit?.method).toBe("POST");
+    expect(JSON.parse(String(verifyInit?.body))).toEqual({ key: presign.key });
+    expect(new Headers(verifyInit?.headers).has("X-Admin-Key")).toBe(true); // this one goes to the API
+  });
+
+  it("shows the API's reason when the check refuses the file, so the product is not saved with it", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch");
+    fetch.mockResolvedValueOnce(json(presign));
+    fetch.mockResolvedValueOnce(new Response(null, { status: 200 }));
+    fetch.mockResolvedValueOnce(json({ detail: "That image is larger than 10 MB" }, 413));
+    await expect(api.uploadImage(file)).rejects.toMatchObject({ status: 413, message: "That image is larger than 10 MB" });
   });
 
   it("suggests a CORS rule when the browser blocks the upload", async () => {
@@ -156,6 +171,7 @@ describe("uploadImage", () => {
     fetch.mockResolvedValueOnce(json(presign));
     fetch.mockRejectedValueOnce(new TypeError("Failed to fetch"));
     await expect(api.uploadImage(file)).rejects.toThrow(/CORS/);
+    expect(fetch).toHaveBeenCalledTimes(2); // nothing to check when nothing arrived
   });
 
   it("reports a refusal from storage", async () => {
@@ -163,6 +179,7 @@ describe("uploadImage", () => {
     fetch.mockResolvedValueOnce(json(presign));
     fetch.mockResolvedValueOnce(new Response("denied", { status: 403 }));
     await expect(api.uploadImage(file)).rejects.toMatchObject({ status: 403, message: expect.stringContaining("403") });
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it("does not try to upload if the API refuses to presign", async () => {

@@ -5,6 +5,7 @@ import type {
   Category,
   Job,
   PresignResponse,
+  UploadCheck,
   Product,
   ProductInput,
   Stats,
@@ -122,7 +123,8 @@ export const api = {
 
   /**
    * Uploads an image straight to object storage and returns the URL to store on the product:
-   * ask the API for a presigned PUT URL, then PUT the file to it.
+   * ask the API for a presigned PUT URL, PUT the file to it, then have the API check what arrived.
+   * A presigned PUT cannot limit the size, so that last step is what refuses (and deletes) an oversized file.
    */
   uploadImage: async (file: File): Promise<string> => {
     const presign = await request<PresignResponse>("/uploads/presign", {
@@ -144,7 +146,11 @@ export const api = {
       );
     }
     if (!res.ok) throw new ApiError(res.status, `The storage service rejected the upload (HTTP ${res.status}).`);
-    return presign.public_url;
+    const checked = await request<UploadCheck>("/uploads/verify", {
+      method: "POST",
+      body: JSON.stringify({ key: presign.key }),
+    });
+    return checked.public_url;
   },
 
   listSessions: (limit: number = config.listLimit) => request<AdminSession[]>(`/sessions?limit=${limit}`),

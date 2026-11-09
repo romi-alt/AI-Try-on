@@ -111,8 +111,9 @@ follower, the store's async flow, the API client, the photo crop and the idle ti
 - **Overview.** Today's counters and the queue depth from `GET /admin/stats`.
 - **Products.** The catalog (`GET /catalog`, sold-out items included) with category, on-sale and search filters and
   paging. Stock is edited in place. Add and edit use a side form: price, optional sale price, stock, sizes, colours
-  and a garment image (plus an optional mask). Images go in two steps, a presigned URL from `POST /uploads/presign`
-  and then a PUT straight to the bucket, so **the bucket must allow CORS PUT from the admin origin** (MinIO does by
+  and a garment image (plus an optional mask). Images go in three steps: a presigned URL from `POST /uploads/presign`, a PUT
+  straight to the bucket, and `POST /uploads/verify`, which deletes and refuses a file that is too big (see
+  `services/api/README.md`). **The bucket must allow CORS PUT from the admin origin** (MinIO does by
   default; for Cloudflare R2 add a CORS rule). Deleting a product that is in a cart is refused by the API, and the
   page suggests setting its stock to 0 instead.
 - **Sessions.** The latest sessions with their try-on counts.
