@@ -16,7 +16,11 @@ BASH = shutil.which("bash")  # absolute, so a test can empty PATH and still star
 def run(script: str, *args, env=None, check=False):
     base = {"PATH": os.environ["PATH"], "HOME": "/nonexistent"}
     return subprocess.run(
-        [BASH, str(KIOSK / script), *args], env={**base, **(env or {})}, capture_output=True, text=True, check=check
+        [BASH, str(KIOSK / script), *args],
+        env={**base, **(env or {})},
+        capture_output=True,
+        text=True,
+        check=check,
     )
 
 
@@ -27,14 +31,25 @@ def test_scripts_have_valid_shell_syntax_and_are_executable(script):
 
 
 def test_dry_run_prints_a_kiosk_command_with_the_url_and_a_private_profile(tmp_path):
-    r = run("start-kiosk.sh", "--once", env={"KIOSK_DRY_RUN": "1", "KIOSK_URL": URL, "KIOSK_PROFILE": str(tmp_path / "p")})
+    r = run(
+        "start-kiosk.sh",
+        "--once",
+        env={"KIOSK_DRY_RUN": "1", "KIOSK_URL": URL, "KIOSK_PROFILE": str(tmp_path / "p")},
+    )
     assert r.returncode == 0, r.stderr
     out = r.stdout.strip()
     assert "--kiosk" in out and out.endswith(URL)
     assert f"--user-data-dir={tmp_path / 'p'}" in out
-    for flag in ("--noerrdialogs", "--disable-session-crashed-bubble", "--disable-infobars", "--no-first-run"):
+    for flag in (
+        "--noerrdialogs",
+        "--disable-session-crashed-bubble",
+        "--disable-infobars",
+        "--no-first-run",
+    ):
         assert flag in out
-    assert "--use-fake-ui-for-media-stream" not in out  # the camera is allowed by policy, never by a test flag
+    assert (
+        "--use-fake-ui-for-media-stream" not in out
+    )  # the camera is allowed by policy, never by a test flag
 
 
 def test_the_loop_mode_dry_run_exits_instead_of_looping_forever():
@@ -58,7 +73,12 @@ def test_a_crash_flag_in_the_profile_is_cleared_so_no_restore_bubble_greets_the_
     prefs = tmp_path / "Default" / "Preferences"
     prefs.parent.mkdir()
     prefs.write_text('{"profile":{"exited_cleanly":false,"exit_type":"Crashed"}}')
-    run("start-kiosk.sh", "--once", env={"KIOSK_DRY_RUN": "1", "KIOSK_URL": URL, "KIOSK_PROFILE": str(tmp_path)}, check=True)
+    run(
+        "start-kiosk.sh",
+        "--once",
+        env={"KIOSK_DRY_RUN": "1", "KIOSK_URL": URL, "KIOSK_PROFILE": str(tmp_path)},
+        check=True,
+    )
     assert json.loads(prefs.read_text()) == {"profile": {"exited_cleanly": True, "exit_type": "Normal"}}
 
 

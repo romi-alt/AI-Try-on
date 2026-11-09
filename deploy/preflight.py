@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Checks deploy/.env.production before the stack is started: python3 preflight.py [path-to-env-file]
 
-It refuses the mistakes that are easy to make and expensive later: a placeholder or dev-default secret still in
-place, a browser origin on http or localhost, a database connection without TLS, photo retention longer than the
-promise on the kiosk's privacy notice, public API docs left on. Errors stop the deploy (exit 1); warnings do not.
+It refuses the mistakes that are easy to make and expensive later: a placeholder or dev-default secret still
+in
+place, a browser origin on http or localhost, a database connection without TLS, photo retention longer than
+the
+promise on the kiosk's privacy notice, public API docs left on. Errors stop the deploy (exit 1); warnings do
+not.
 Standard library only.
 """
 
@@ -98,7 +101,9 @@ def check(env: dict[str, str]) -> tuple[list[str], list[str]]:
     db = val("DATABASE_URL")
     if db:
         if not db.startswith("postgresql+psycopg://"):
-            errors.append("DATABASE_URL must start with postgresql+psycopg:// (not postgres:// or postgresql://)")
+            errors.append(
+                "DATABASE_URL must start with postgresql+psycopg:// (not postgres:// or postgresql://)"
+            )
         host = urlparse(db).hostname or ""
         if host in ("localhost", "127.0.0.1", "postgres", "db"):
             warnings.append("DATABASE_URL points at a local host; production should use the managed database")
@@ -115,7 +120,10 @@ def check(env: dict[str, str]) -> tuple[list[str], list[str]]:
         if not raw:
             warnings.append(f"{key} is not set (the default is 3600)")
         elif not raw.isdigit() or int(raw) > MAX_RETENTION_SECONDS or int(raw) < 60:
-            errors.append(f"{key}={raw}: photos and looks must be deleted within {MAX_RETENTION_SECONDS} seconds (the privacy notice says one hour)")
+            errors.append(
+                f"{key}={raw}: photos and looks must be deleted within {MAX_RETENTION_SECONDS} seconds "
+                "(the privacy notice says one hour)"
+            )
     if val("CAPTURE_CLEANUP_ENABLED").lower() in ("false", "0", "no"):
         errors.append("CAPTURE_CLEANUP_ENABLED is off: nothing would delete photos")
 
