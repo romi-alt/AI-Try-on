@@ -21,6 +21,7 @@ from app.core.ratelimit import check_session
 from app.core.redis import get_redis
 from app.models import Product, StaffRequest, StaffRequestStatus
 from app.schemas.staff import StaffRequestCreate, StaffRequestOut, StaffRequestStatusIn
+from app.services.events import track
 from app.services.notifier import get_notifier
 
 router = APIRouter(prefix="/requests", tags=["staff"])
@@ -98,6 +99,13 @@ async def create_request(
     await db.refresh(request)
     logger.info(
         "staff_request_created", extra={"request_id": str(request.id), "session_id": str(payload.session_id)}
+    )
+    track(
+        "request_outfit",
+        payload.session_id,
+        product_id=str(product.id),
+        category=product.category.value,
+        has_size=payload.size is not None,
     )
     await _publish("request.created", request)
     background.add_task(_notify, request)

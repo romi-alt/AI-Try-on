@@ -12,6 +12,7 @@ from app.core.ratelimit import check_ip, check_session
 from app.core.storage import capture_key, put_capture
 from app.models import KioskSession
 from app.schemas.capture import CaptureOut
+from app.services.events import track
 from app.services.image_processing import CaptureRejected, process_capture
 
 router = APIRouter(tags=["capture"])
@@ -68,6 +69,7 @@ async def upload_capture(
             "bytes_stored": len(processed.data),
         },
     )
+    track("capture", session_id, width=processed.width, height=processed.height)
     return CaptureOut(
         key=key,
         width=processed.width,

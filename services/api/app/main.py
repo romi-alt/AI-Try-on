@@ -27,10 +27,13 @@ from app.api import (
 from app.core.config import settings
 from app.core.limits import BodySizeLimitMiddleware
 from app.core.logging import RequestLoggingMiddleware, configure_logging
-from app.services import csv_import
+from app.core.observability import init_sentry
+from app.services import csv_import, events
 from app.services.capture_cleanup import cleanup_loop
 
 configure_logging(settings.log_level)
+init_sentry()  # before the app is created, so its FastAPI integration can attach
+events.configure(settings.posthog_api_key, settings.posthog_host)
 logger = logging.getLogger("app")
 
 # Multipart framing on top of the file itself.
@@ -53,6 +56,10 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     lifespan=lifespan,
+    # The interactive docs list every route; leave them off on a public server (API_DOCS_ENABLED=false).
+    docs_url="/docs" if settings.api_docs_enabled else None,
+    redoc_url="/redoc" if settings.api_docs_enabled else None,
+    openapi_url="/openapi.json" if settings.api_docs_enabled else None,
     title="ELEVARIQ Virtual Try on Mirror API",
     version="0.1.0",
     description="Backend for the ELEVARIQ Virtual Try on Mirror: catalog, sessions, carts and try-on jobs.",

@@ -10,6 +10,7 @@ from app.api.deps import AsyncDb
 from app.core.ratelimit import check_session
 from app.models import Cart, CartItem, KioskSession, Product
 from app.schemas.cart import CartAddIn, CartItemOut, CartItemUpdateIn, CartOut, CartProductOut
+from app.services.events import track
 
 router = APIRouter(prefix="/cart", tags=["cart"])
 logger = logging.getLogger("app.cart")
@@ -142,6 +143,14 @@ async def add_to_cart(payload: CartAddIn, db: AsyncDb):
             "quantity": payload.quantity,
             "merged": line is not None,
         },
+    )
+    track(
+        "add_to_cart",
+        payload.session_id,
+        product_id=str(product.id),
+        category=product.category.value,
+        quantity=payload.quantity,
+        on_sale=product.on_sale,
     )
     return await _build_cart(db, payload.session_id)
 

@@ -23,6 +23,18 @@ class Settings(BaseSettings):
     # How long the latest state of a job (Redis hash `job:{id}`) is kept after its last update.
     job_state_ttl_seconds: int = 24 * 3600
 
+    api_docs_enabled: bool = True
+
+    # --- error tracking and product analytics (both off until a key is set) ---
+    sentry_dsn: str = ""
+    sentry_environment: str = "development"
+    sentry_release: str = ""
+    sentry_traces_sample_rate: float = Field(default=0.0, ge=0, le=1)
+    # Server-side PostHog events (session_start, capture, tryon_done, add_to_cart, request_outfit): anonymous,
+    # keyed by the session id, no pictures and no personal data.
+    posthog_api_key: str = ""
+    posthog_host: str = "https://us.i.posthog.com"
+
     # --- rate limiting (see app/core/ratelimit.py for the rules) ---
     rate_limit_enabled: bool = True
     # Redis trouble lets requests through instead of refusing them
@@ -59,6 +71,10 @@ class Settings(BaseSettings):
     capture_max_pixels: int = 40_000_000
     # Captures are personal photos: deleted after this long.
     capture_ttl_seconds: int = 3600
+    # Finished looks show the shopper's face too, so they are deleted on the same schedule (the mobile page
+    # then
+    # shows the cart without the picture). Keep this at or below the worker's RESULT_URL_EXPIRES_SECONDS.
+    result_ttl_seconds: int = 3600
     capture_cleanup_enabled: bool = True
     capture_cleanup_interval_seconds: int = 300
 

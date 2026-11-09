@@ -121,6 +121,33 @@ async def test_loop_survives_a_failing_sweep(s3, monkeypatch, caplog):
             await task
 
 
+async def test_sweep_deletes_finished_looks_after_their_ttl_but_not_before(s3):
+    sid = uuid.uuid4()
+    put(s3, f"results/{sid}/job.webp")
+    put(s3, f"garment/2026/01/01/{uuid.uuid4().hex}.png")  # not a shopper's photo: never touched
+
+    assert await capture_cleanup.sweep_results_once(ttl_seconds=3600) == 0  # still fresh
+    assert await capture_cleanup.sweep_results_once(ttl_seconds=0) == 1
+    assert [k for k in keys(s3) if k.startswith("results/")] == []
+    assert any(k.startswith("garment/") for k in keys(s3))
+
+
+async def test_the_loop_sweeps_results_too(s3, monkeypatch):
+    monkeypatch.setattr(settings, "result_ttl_seconds", 0)
+    put(s3, "results/s/j.webp")
+    task = asyncio.create_task(capture_cleanup.cleanup_loop(0.05, ttl_seconds=3600))
+    try:
+        for _ in range(100):
+            if not keys(s3):
+                break
+            await asyncio.sleep(0.05)
+        assert keys(s3) == set()
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
 def test_lifecycle_rule_is_applied_idempotently_and_keeps_other_rules(s3):
     s3.put_bucket_lifecycle_configuration(
         Bucket=settings.s3_bucket,
@@ -140,13 +167,14 @@ def test_lifecycle_rule_is_applied_idempotently_and_keeps_other_rules(s3):
     apply_lifecycle.run()
 
     rules = {r["ID"]: r for r in s3.get_bucket_lifecycle_configuration(Bucket=settings.s3_bucket)["Rules"]}
-    assert set(rules) == {"other", "captures-expire-1d"}
+    assert set(rules) == {"other", "captures-expire-1d", "results-expire-1d"}
     mine = rules["captures-expire-1d"]
     assert mine["Expiration"]["Days"] == 1 and mine["Filter"]["Prefix"] == "captures/"
+    assert rules["results-expire-1d"]["Filter"]["Prefix"] == "results/"
     assert rules["other"]["Expiration"]["Days"] == 30
 
 
 def test_lifecycle_rule_on_a_bucket_with_no_rules(s3):
     apply_lifecycle.run()
     rules = s3.get_bucket_lifecycle_configuration(Bucket=settings.s3_bucket)["Rules"]
-    assert [r["ID"] for r in rules] == ["captures-expire-1d"]
+    assert sorted(r["ID"] for r in rules) == ["captures-expire-1d", "results-expire-1d"]

@@ -8,6 +8,7 @@ from app.core.auth import require_admin
 from app.core.ratelimit import check_ip
 from app.models import KioskSession, TryOnJob
 from app.schemas.session import SessionAdminOut, SessionCreate, SessionOut
+from app.services.events import track
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 logger = logging.getLogger("app.sessions")
@@ -22,6 +23,7 @@ async def create_session(payload: SessionCreate, request: Request, db: AsyncDb):
     await db.commit()
     await db.refresh(session)
     logger.info("session_started", extra={"session_id": str(session.id)})
+    track("session_start", session.id)
     return session
 
 
