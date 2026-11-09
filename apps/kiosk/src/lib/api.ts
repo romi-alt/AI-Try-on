@@ -123,4 +123,8 @@ export const api = {
     }),
 
   getCart: (sessionId: string) => request<Cart>(`/cart/${sessionId}`),
+
+  /** Removes one whole line and returns the updated cart. A line that is already gone is a 404. */
+  removeFromCart: (sessionId: string, itemId: string) =>
+    request<Cart>(`/cart/${sessionId}/items/${itemId}`, { method: "DELETE" }),
 };

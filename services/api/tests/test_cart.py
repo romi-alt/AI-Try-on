@@ -196,3 +196,86 @@ async def test_cart_reflects_current_prices(api, adb):
     await adb.flush()
 
     assert (await api.get(f"/cart/{sid}")).json()["subtotal_pkr"] == 700
+
+
+async def test_remove_deletes_the_line_and_returns_the_updated_cart(api, adb):
+    shirt = await make_product(adb, price_pkr=1000, sizes=["S", "M"])
+    hat = await make_product(adb, price_pkr=500, sizes=["M"])
+    sid = await make_session(api)
+    await add(api, sid, shirt, size="S", quantity=3)
+    cart = (await add(api, sid, hat)).json()
+    shirt_line = next(i for i in cart["items"] if i["product"]["id"] == str(shirt.id))
+
+    r = await api.delete(f"/cart/{sid}/items/{shirt_line['id']}")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert [i["product"]["id"] for i in body["items"]] == [str(hat.id)]
+    assert body["item_count"] == 1 and body["subtotal_pkr"] == 500
+    assert (await api.get(f"/cart/{sid}")).json() == body
+
+
+async def test_remove_only_touches_the_named_line(api, adb):
+    p = await make_product(adb, sizes=["S", "M"], stock=10)
+    sid = await make_session(api)
+    await add(api, sid, p, size="S")
+    items = (await add(api, sid, p, size="M")).json()["items"]
+    small = next(i for i in items if i["size"] == "S")
+
+    body = (await api.delete(f"/cart/{sid}/items/{small['id']}")).json()
+
+    assert [i["size"] for i in body["items"]] == ["M"]
+
+
+async def test_removing_the_last_line_leaves_an_empty_cart(api, adb):
+    p = await make_product(adb, sizes=["M"])
+    sid = await make_session(api)
+    (item,) = (await add(api, sid, p)).json()["items"]
+
+    body = (await api.delete(f"/cart/{sid}/items/{item['id']}")).json()
+
+    assert body["items"] == [] and body["item_count"] == 0 and body["subtotal_pkr"] == 0
+
+
+async def test_removing_frees_the_stock_for_a_new_add(api, adb):
+    p = await make_product(adb, sizes=["M"], stock=1)
+    sid = await make_session(api)
+    (item,) = (await add(api, sid, p)).json()["items"]
+    assert (await add(api, sid, p)).status_code == 409
+
+    await api.delete(f"/cart/{sid}/items/{item['id']}")
+
+    assert (await add(api, sid, p)).status_code == 200
+
+
+async def test_a_session_cannot_remove_another_sessions_line(api, adb):
+    p = await make_product(adb, sizes=["M"])
+    mine, theirs = await make_session(api), await make_session(api)
+    (item,) = (await add(api, theirs, p)).json()["items"]
+    await add(api, mine, p)
+
+    r = await api.delete(f"/cart/{mine}/items/{item['id']}")
+
+    assert r.status_code == 404
+    assert (await api.get(f"/cart/{theirs}")).json()["item_count"] == 1
+
+
+async def test_removing_an_unknown_or_already_removed_line_is_404(api, adb):
+    p = await make_product(adb, sizes=["M"])
+    sid = await make_session(api)
+    (item,) = (await add(api, sid, p)).json()["items"]
+
+    assert (await api.delete(f"/cart/{sid}/items/{item['id']}")).status_code == 200
+    assert (await api.delete(f"/cart/{sid}/items/{item['id']}")).status_code == 404
+    assert (await api.delete(f"/cart/{sid}/items/{uuid.uuid4()}")).status_code == 404
+
+
+async def test_remove_from_a_session_that_never_had_a_cart_is_404(api):
+    sid = await make_session(api)
+    assert (await api.delete(f"/cart/{sid}/items/{uuid.uuid4()}")).status_code == 404
+
+
+async def test_remove_with_unknown_session_is_404_and_bad_ids_are_422(api):
+    assert (await api.delete(f"/cart/{uuid.uuid4()}/items/{uuid.uuid4()}")).status_code == 404
+    assert (await api.delete(f"/cart/not-a-uuid/items/{uuid.uuid4()}")).status_code == 422
+    assert (await api.delete(f"/cart/{uuid.uuid4()}/items/not-a-uuid")).status_code == 422

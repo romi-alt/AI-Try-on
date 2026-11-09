@@ -2,7 +2,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -142,6 +142,38 @@ async def add_to_cart(payload: CartAddIn, db: AsyncDb):
         },
     )
     return await _build_cart(db, payload.session_id)
+
+
+@router.delete("/{session_id}/items/{item_id}", response_model=CartOut)
+async def remove_from_cart(session_id: uuid.UUID, item_id: uuid.UUID, db: AsyncDb):
+    """Remove one line (all of its quantity) from the session's cart and return the updated cart.
+
+    The line must belong to this session's cart: another session's line id is a 404, so a session id
+    cannot be used to delete someone else's items. An id that is already gone is also a 404, which
+    a client that double-tapped can treat as "done".
+    """
+    await _require_session(db, session_id)
+    # Same row lock as /cart/add, so a removal and a simultaneous add are applied one at a time.
+    cart = (
+        await db.execute(select(Cart).where(Cart.session_id == session_id).with_for_update())
+    ).scalar_one_or_none()
+    removed = None
+    if cart:
+        removed = await db.scalar(
+            delete(CartItem)
+            .where(CartItem.id == item_id, CartItem.cart_id == cart.id)
+            .returning(CartItem.product_id)
+        )
+    if removed is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "That item is not in the cart")
+    cart.updated_at = func.now()
+    await db.commit()
+
+    logger.info(
+        "cart_item_removed",
+        extra={"session_id": str(session_id), "item_id": str(item_id), "product_id": str(removed)},
+    )
+    return await _build_cart(db, session_id)
 
 
 @router.get("/{session_id}", response_model=CartOut)

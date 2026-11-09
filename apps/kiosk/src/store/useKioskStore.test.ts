@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     getJob: vi.fn(),
     addToCart: vi.fn(),
     getCart: vi.fn(),
+    removeFromCart: vi.fn(),
   },
   events: { track: vi.fn(), close: vi.fn() },
   createSessionEvents: vi.fn(),
@@ -504,5 +505,100 @@ describe("the cart", () => {
     store().openCart();
     await flush();
     expect(store().cart).toEqual(cart);
+  });
+});
+
+describe("removing from the cart", () => {
+  const line = { id: "line-1", product: {}, size: "M", color: null, quantity: 2, unit_price_pkr: 500, line_total_pkr: 1000 };
+  const full = { session_id: "sess-1", cart_id: "c1", items: [line], item_count: 2, subtotal_pkr: 1000 };
+  const empty = { session_id: "sess-1", cart_id: "c1", items: [], item_count: 0, subtotal_pkr: 0 };
+  beforeEach(openSession);
+
+  it("removes the line and keeps the cart the API returns", async () => {
+    useKioskStore.setState({ cart: full as never });
+    mocks.api.removeFromCart.mockResolvedValue(empty);
+
+    const result = await store().removeFromCart("line-1");
+
+    expect(result).toEqual({ ok: true });
+    expect(mocks.api.removeFromCart).toHaveBeenCalledWith("sess-1", "line-1");
+    expect(store().cart).toEqual(empty);
+  });
+
+  it("shows the real cart when the line was already gone", async () => {
+    useKioskStore.setState({ cart: full as never });
+    mocks.api.removeFromCart.mockRejectedValue(new ApiError(404, "That item is not in the cart"));
+    mocks.api.getCart.mockResolvedValue(empty);
+
+    const result = await store().removeFromCart("line-1");
+
+    expect(result).toEqual({ ok: true });
+    expect(store().cart).toEqual(empty);
+  });
+
+  it("reports a failure and keeps the cart on screen", async () => {
+    useKioskStore.setState({ cart: full as never });
+    mocks.api.removeFromCart.mockRejectedValue(new ApiError(0, "Can't reach the mirror's server."));
+
+    const result = await store().removeFromCart("line-1");
+
+    expect(result).toEqual({ ok: false, message: "Can't reach the mirror's server." });
+    expect(store().cart).toEqual(full);
+  });
+
+  it("keeps the original message when a 404 cannot be refreshed either", async () => {
+    mocks.api.removeFromCart.mockRejectedValue(new ApiError(404, "That item is not in the cart"));
+    mocks.api.getCart.mockRejectedValue(new ApiError(0, "offline"));
+    expect(await store().removeFromCart("line-1")).toEqual({ ok: false, message: "That item is not in the cart" });
+  });
+
+  it("does nothing without a session", async () => {
+    store().reset();
+    const result = await store().removeFromCart("line-1");
+    expect(result.ok).toBe(false);
+    expect(mocks.api.removeFromCart).not.toHaveBeenCalled();
+  });
+
+  it("never shows the previous shopper's cart to the next one", async () => {
+    let finish!: (c: unknown) => void;
+    mocks.api.removeFromCart.mockReturnValue(new Promise((r) => (finish = r)));
+    const pending = store().removeFromCart("line-1");
+    await flush();
+
+    store().reset(); // the idle timeout fired while the request was in flight
+    finish(empty);
+    await pending;
+
+    expect(store().cart).toBeNull();
+  });
+
+  it("applies cart changes in the order they were made, even if answers arrive late", async () => {
+    const answers: Array<(c: unknown) => void> = [];
+    mocks.api.getCart.mockImplementation(() => new Promise((r) => answers.push(r)));
+    mocks.api.removeFromCart.mockResolvedValue(empty);
+
+    store().openCart(); // refresh starts first...
+    const removal = store().removeFromCart("line-1"); // ...the removal is made after it
+    await flush();
+    expect(mocks.api.removeFromCart).not.toHaveBeenCalled(); // waits for the refresh to finish
+
+    answers[0](full);
+    await removal;
+
+    expect(mocks.api.removeFromCart).toHaveBeenCalledTimes(1);
+    expect(store().cart).toEqual(empty); // the removal is the last word, not the older refresh
+  });
+
+  it("does not let an add that finishes after the shopper left write into the next session", async () => {
+    let finish!: (c: unknown) => void;
+    mocks.api.addToCart.mockReturnValue(new Promise((r) => (finish = r)));
+    const pending = store().addToCart(product("a"), "M", null);
+    await flush();
+
+    store().reset();
+    finish(full);
+    await pending;
+
+    expect(store().cart).toBeNull();
   });
 });

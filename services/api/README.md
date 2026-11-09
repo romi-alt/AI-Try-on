@@ -15,6 +15,7 @@ FastAPI backend. Owns the catalog, kiosk sessions, presigned uploads and try-on 
 | GET    | `/sessions`                  | admin  | Sessions with try-on counts                  |
 | POST   | `/cart/add`                  | –      | Add a product (size/color/quantity) to the session's cart; returns the cart |
 | GET    | `/cart/{session_id}`         | –      | The session's cart with prices and subtotal  |
+| DELETE | `/cart/{session_id}/items/{item_id}` | – | Remove one cart line (all its quantity); returns the cart. 404 if the line is not in this session's cart or is already gone |
 | POST   | `/capture`                   | –      | Upload a webcam photo (multipart `file` + `session_id`); returns its storage key |
 | POST   | `/tryon`                     | –      | Queue a try-on for 1–5 `product_ids`; returns `job_id` immediately (202) |
 | GET    | `/tryon/{id}`                | –      | Job row from Postgres: status, progress, result URL or error |
@@ -32,7 +33,8 @@ FastAPI backend. Owns the catalog, kiosk sessions, presigned uploads and try-on 
 - **Cart:** one cart per session, created on first add. Adding the same product/size/color again
   increases that line. `size` and `color` must be one of the product's options and may only be
   omitted when there is nothing to choose. Stock is checked across all lines of a product but not
-  reserved. Concurrent adds to one cart are serialised with a row lock.
+  reserved. Concurrent adds and removals on one cart are serialised with a row lock. Removing a line frees its
+  stock for later adds; there is no endpoint to change a quantity, so lowering one means removing the line and adding again.
 - **Prices:** `current_price_pkr` is the sale price when on sale, else the regular price. Cart totals
   use the current price.
 - **CORS:** only the origins in `API_CORS_ORIGINS` (default: kiosk `:3000` and admin `:3001`); no credentials.

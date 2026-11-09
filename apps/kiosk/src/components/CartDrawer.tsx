@@ -1,14 +1,35 @@
 "use client";
 
 /* eslint-disable @next/next/no-img-element */
+import { useEffect, useState } from "react";
 import { formatPkr } from "@/lib/money";
+import type { CartItem } from "@/lib/types";
 import { useKioskStore } from "@/store/useKioskStore";
+
+function removeLabel(item: CartItem): string {
+  const variant = [item.size, item.color].filter(Boolean).join(", ");
+  return `Remove ${item.product.name}${variant ? `, ${variant}` : ""} from cart`;
+}
 
 export function CartDrawer() {
   const open = useKioskStore((s) => s.cartOpen);
   const cart = useKioskStore((s) => s.cart);
   const close = useKioskStore((s) => s.closeCart);
+  const removeFromCart = useKioskStore((s) => s.removeFromCart);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) setError(null);
+  }, [open]);
   if (!open) return null;
+
+  async function remove(itemId: string) {
+    setRemoving(itemId);
+    setError(null);
+    const result = await removeFromCart(itemId);
+    setRemoving(null);
+    if (!result.ok) setError(result.message);
+  }
 
   const items = cart?.items ?? [];
   return (
@@ -35,11 +56,26 @@ export function CartDrawer() {
                 <p className="text-sm text-mist/80">
                   {item.quantity} × {formatPkr(item.unit_price_pkr)}
                 </p>
+                <button
+                  type="button"
+                  onClick={() => remove(item.id)}
+                  disabled={removing !== null}
+                  aria-label={removing === item.id ? undefined : removeLabel(item)}
+                  className="mt-2 min-h-11 rounded-full border border-white/25 px-4 text-sm hover:bg-white/10 disabled:opacity-50"
+                >
+                  {removing === item.id ? "Removing…" : "Remove"}
+                </button>
               </div>
               <p className="font-medium tabular-nums">{formatPkr(item.line_total_pkr)}</p>
             </li>
           ))}
         </ul>
+
+        {error && (
+          <p role="alert" className="mx-6 mb-2 rounded-lg bg-red-500/15 px-4 py-3 text-sm text-red-200">
+            {error}
+          </p>
+        )}
 
         <div className="space-y-1 border-t border-white/10 p-6">
           <div className="flex items-baseline justify-between text-xl">

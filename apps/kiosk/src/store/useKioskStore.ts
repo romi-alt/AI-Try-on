@@ -18,6 +18,7 @@ export type Filters = { category: Category | "all"; onSale: boolean; search: str
 export type CatalogState = "idle" | "loading" | "loadingMore" | "error";
 export type CaptureFn = () => Promise<Blob>;
 export type AddToCartResult = { ok: true } | { ok: false; message: string };
+export type RemoveFromCartResult = AddToCartResult;
 
 const GENERIC_ERROR = "Something went wrong. Please try again.";
 const TOO_SLOW = "This is taking longer than expected. Please try again.";
@@ -60,6 +61,7 @@ type State = {
   cancelCountdown: () => void;
   backToBrowsing: () => void;
   addToCart: (product: Product, size: string | null, color: string | null) => Promise<AddToCartResult>;
+  removeFromCart: (itemId: string) => Promise<RemoveFromCartResult>;
   openCart: () => void;
   closeCart: () => void;
   reset: () => void;
@@ -72,6 +74,14 @@ let events: SessionEvents | null = null;
 let untrack: (() => void) | null = null;
 let jobTimer: ReturnType<typeof setTimeout> | undefined;
 let captureFn: CaptureFn | null = null;
+// Cart changes are applied one at a time, in the order they were made. Each response is a whole cart, so
+// two in flight together could otherwise finish out of order and leave the older cart on screen.
+let cartQueue: Promise<unknown> = Promise.resolve();
+function inCartOrder<T>(task: () => Promise<T>): Promise<T> {
+  const run = cartQueue.then(task, task);
+  cartQueue = run.catch(() => undefined);
+  return run;
+}
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -244,22 +254,56 @@ export const useKioskStore = create<State>((set, get) => {
       set({ phase: "browsing", error: null, job: null, resultUrl: null });
     },
 
-    addToCart: async (product, size, color) => {
-      const { session } = get();
-      if (!session) return { ok: false, message: GENERIC_ERROR };
-      try {
-        const cart = await api.addToCart({ sessionId: session.id, productId: product.id, size, color });
-        set({ cart });
-        return { ok: true };
-      } catch (e) {
-        return { ok: false, message: describeError(e) };
-      }
-    },
+    addToCart: (product, size, color) =>
+      inCartOrder(async (): Promise<AddToCartResult> => {
+        const sessionId = get().session?.id;
+        if (!sessionId) return { ok: false, message: GENERIC_ERROR };
+        try {
+          const cart = await api.addToCart({ sessionId, productId: product.id, size, color });
+          // The shopper may have left (idle reset) while this was in flight: never show their cart to the next one.
+          if (get().session?.id === sessionId) set({ cart });
+          return { ok: true };
+        } catch (e) {
+          return { ok: false, message: describeError(e) };
+        }
+      }),
+
+    removeFromCart: (itemId) =>
+      inCartOrder(async (): Promise<RemoveFromCartResult> => {
+        const sessionId = get().session?.id;
+        if (!sessionId) return { ok: false, message: GENERIC_ERROR };
+        const apply = (cart: Cart) => {
+          if (get().session?.id === sessionId) set({ cart });
+        };
+        try {
+          apply(await api.removeFromCart(sessionId, itemId));
+          return { ok: true };
+        } catch (e) {
+          if (e instanceof ApiError && e.status === 404) {
+            // Already gone (a double tap, or removed elsewhere): the cart on screen is stale, so show the real one.
+            try {
+              apply(await api.getCart(sessionId));
+              return { ok: true };
+            } catch {
+              /* fall through to the original message */
+            }
+          }
+          return { ok: false, message: describeError(e) };
+        }
+      }),
 
     openCart: () => {
       set({ cartOpen: true });
-      const session = get().session;
-      if (session) api.getCart(session.id).then((cart) => set({ cart })).catch(() => undefined);
+      const sessionId = get().session?.id;
+      if (!sessionId) return;
+      void inCartOrder(async () => {
+        try {
+          const cart = await api.getCart(sessionId);
+          if (get().session?.id === sessionId) set({ cart });
+        } catch {
+          /* the cart on screen stays as it was */
+        }
+      });
     },
 
     closeCart: () => set({ cartOpen: false }),

@@ -86,8 +86,9 @@ The browser will ask for camera permission once the shopper agrees on the consen
 5. **Result.** The result image, with a size and colour choice per item and *Add to cart*. The cart drawer shows
    the API's totals. The camera is switched off while the result is shown.
 
-Leaving the page (Exit) ends the session and closes the live connection. The cart is add-only because the API
-has no remove endpoint.
+Leaving the page (Exit) ends the session and closes the live connection. In the cart drawer each line has a
+*Remove* button that removes the whole line (there is no quantity editor). Cart changes are sent one at a time in
+the order they were made, and an answer that arrives after the shopper has left is discarded.
 
 **Idle timeout.** After 60 seconds without input (consent, choosing, result or error screens) an "Are you still
 there?" screen covers the mirror and counts down 15 seconds. *I'm still here*, tapping the screen or pressing a
