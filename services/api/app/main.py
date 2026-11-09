@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
     admin,
+    analytics,
     capture,
     cart,
     catalog,
@@ -26,6 +27,7 @@ from app.api import (
 from app.core.config import settings
 from app.core.limits import BodySizeLimitMiddleware
 from app.core.logging import RequestLoggingMiddleware, configure_logging
+from app.services import csv_import
 from app.services.capture_cleanup import cleanup_loop
 
 configure_logging(settings.log_level)
@@ -57,7 +59,10 @@ app = FastAPI(
 )
 
 # Innermost of the three, so an over-size 413 still gets CORS headers and a request-log line.
-app.add_middleware(BodySizeLimitMiddleware, limits={"/capture": CAPTURE_BODY_LIMIT})
+app.add_middleware(
+    BodySizeLimitMiddleware,
+    limits={"/capture": CAPTURE_BODY_LIMIT, "/products/import": csv_import.MAX_BYTES + 1024},
+)
 
 # CORS: only the configured browser origins (the kiosk, plus the admin app) may call the API.
 # No cookies are used, so credentials stay off.
@@ -87,5 +92,6 @@ app.include_router(tryon.router)
 app.include_router(jobs.router)
 app.include_router(ws.router)
 app.include_router(admin.router)
+app.include_router(analytics.router)
 
 logger.info("api_started", extra={"cors_origins": settings.cors_origins})

@@ -1,7 +1,8 @@
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from starlette.concurrency import run_in_threadpool
@@ -12,11 +13,14 @@ from app.models import ProcessingStatus, Product
 from app.schemas.product import (
     AssetJobAccepted,
     EmbeddingRequest,
+    ImportReport,
+    ImportRowResult,
     ProductCreate,
     ProductOut,
     ProductUpdate,
     SimilarProductOut,
 )
+from app.services.csv_import import CsvError, parse_csv
 from app.services.queue import enqueue_embeddings, enqueue_process_garment
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -158,3 +162,138 @@ async def regenerate_embeddings(payload: EmbeddingRequest, db: AsyncDb):
             status.HTTP_503_SERVICE_UNAVAILABLE, "The image service is busy. Try again."
         ) from e
     return AssetJobAccepted(job_id=job_id, products=len(payload.product_ids or []))
+
+
+def _friendly(e: ValidationError) -> list[str]:
+    out = []
+    for err in e.errors():
+        field = ".".join(str(p) for p in err["loc"] if not isinstance(p, int))
+        msg = "is required" if err["type"] == "missing" else err["msg"].replace("Value error, ", "")
+        out.append(
+            f"{field} {msg}" if field and err["type"] == "missing" else (f"{field}: {msg}" if field else msg)
+        )
+    return out
+
+
+# What a CSV row may change on an existing product: the columns of the file, under their `Product` names.
+_BASE_FIELDS = (
+    "sku",
+    "name",
+    "category",
+    "price_pkr",
+    "sale_price_pkr",
+    "sizes",
+    "colors",
+    "stock",
+    "garment_image_url",
+    "garment_mask_url",
+)
+
+
+@router.post("/import", response_model=ImportReport, dependencies=[Depends(require_admin)])
+async def import_products(
+    request: Request,
+    db: AsyncDb,
+    dry_run: bool = Query(default=False, description="Check the file and report, without saving anything"),
+    embed: bool = Query(default=True, description="Queue embeddings for new products and changed images"),
+):
+    """Create or update products from a CSV file sent as the request body (`text/csv`). Admin only.
+
+    Rows are matched on `sku`: an existing SKU is updated (empty cells keep the current value), any other row
+    creates a product. See `app/services/csv_import.py` for the columns. It is all or nothing: if any row has
+    a problem nothing is saved, and every row is reported so the whole file can be fixed in one go. Use
+    `dry_run=true` to check a file first.
+    """
+    try:
+        rows = parse_csv(await request.body())
+    except CsvError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
+
+    skus = sorted({r.sku for r in rows if r.sku})
+    existing: dict[str, Product] = {}
+    if skus:
+        found = await db.execute(
+            select(Product).where(Product.sku.in_(skus)).order_by(Product.id).with_for_update()
+        )
+        existing = {p.sku: p for p in found.scalars()}
+
+    results: list[ImportRowResult] = []
+    plan: list[tuple[str, Product | None, dict]] = []  # (action, product, validated fields)
+    seen: set[str] = set()
+    for row in rows:
+        errors = list(row.errors)
+        action, product, fields = "create", None, {}
+        if row.sku and row.sku in seen:
+            errors.append(f"sku {row.sku!r} appears more than once in this file")
+        if row.sku:
+            seen.add(row.sku)
+        if not errors:
+            product = existing.get(row.sku) if row.sku else None
+            base = {f: getattr(product, f) for f in _BASE_FIELDS} if product else {"sku": row.sku}
+            action = "update" if product else "create"
+            try:
+                fields = ProductCreate(**{**base, **row.values}).model_dump()
+            except ValidationError as e:
+                errors = _friendly(e)
+        results.append(
+            ImportRowResult(
+                line=row.line,
+                action="error" if errors else action,
+                sku=row.sku,
+                name=row.values.get("name") or (product.name if product else None),
+                errors=errors,
+            )
+        )
+        plan.append((action, product, fields))
+
+    error_count = sum(1 for r in results if r.action == "error")
+    created = sum(1 for r in results if r.action == "create")
+    updated = sum(1 for r in results if r.action == "update")
+    report = ImportReport(
+        dry_run=dry_run,
+        applied=False,
+        created=created,
+        updated=updated,
+        error_count=error_count,
+        rows=results,
+    )
+    if dry_run or error_count or not rows:
+        await db.rollback()  # releases the row locks
+        return report
+
+    touched: list[Product] = []  # new products and ones whose picture changed: their embedding is stale
+    for action, product, fields in plan:
+        if action == "create":
+            product = Product(**fields)
+            db.add(product)
+            touched.append(product)
+        else:
+            assert product is not None
+            if fields["garment_image_url"] != product.garment_image_url:
+                # A new picture: the old cutout, mask and embedding no longer describe it.
+                product.garment_mask_url = None
+                product.garment_original_url = None
+                product.processing_status = ProcessingStatus.idle
+                product.processing_error = None
+                touched.append(product)
+            for name, value in fields.items():
+                if name != "garment_mask_url":  # the file has no mask column; it was reset above if needed
+                    setattr(product, name, value)
+    try:
+        await db.flush()
+    except IntegrityError as e:
+        await db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, f"{SKU_TAKEN} (another change got there first)") from e
+    to_embed = [p.id for p in touched]
+    await db.commit()
+    report.applied = True
+
+    if embed and to_embed:
+        try:
+            report.embedding_job_id = await run_in_threadpool(
+                enqueue_embeddings, to_embed, only_missing=False
+            )
+        except Exception:
+            logger.exception("import_embed_enqueue_failed")  # the import itself succeeded
+    logger.info("products_imported", extra={"rows_created": created, "rows_updated": updated})
+    return report

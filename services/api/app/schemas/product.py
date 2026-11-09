@@ -78,3 +78,23 @@ class EmbeddingRequest(BaseModel):
         default=None, max_length=500, description="Products to embed; omit for the whole catalog"
     )
     only_missing: bool = Field(default=False, description="Skip products that already have an embedding")
+
+
+class ImportRowResult(BaseModel):
+    line: int = Field(description="Line in the file (the header is line 1)")
+    action: str = Field(description="create, update or error")
+    sku: str | None
+    name: str | None
+    errors: list[str] = Field(default_factory=list)
+
+
+class ImportReport(BaseModel):
+    dry_run: bool
+    applied: bool = Field(
+        description="True only when the changes were saved: never after errors or a dry run"
+    )
+    created: int
+    updated: int
+    error_count: int
+    rows: list[ImportRowResult]
+    embedding_job_id: str | None = None
